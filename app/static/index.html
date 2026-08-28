@@ -1,0 +1,140 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="dark" />
+    <title>Voice Model Comparison Lab</title>
+    <link rel="stylesheet" href="/static/styles.css" />
+  </head>
+  <body>
+    <main class="shell">
+      <section class="card" aria-labelledby="page-title">
+        <header class="hero">
+          <p class="eyebrow">VOICE MODEL COMPARISON LAB</p>
+          <h1 id="page-title">같은 대화,<br />세 가지 엔진.</h1>
+          <p class="description">
+            모드를 선택한 뒤 같은 질문을 말해보세요. 연결 시간, 응답 지연과 대화 기록을 한 화면에서 비교할 수 있습니다.
+          </p>
+        </header>
+
+        <section class="mode-section" aria-labelledby="mode-title">
+          <h2 id="mode-title" class="sr-only">비교 모드</h2>
+          <div class="mode-tabs" role="tablist" aria-label="음성 엔진 선택">
+            <button
+              class="mode-button active"
+              data-mode="elevenlabs"
+              role="tab"
+              aria-selected="true"
+              type="button"
+            >
+              <span class="mode-number">01</span>
+              <strong>ElevenLabs</strong>
+              <small>현재 Agent</small>
+              <span class="config-state">확인 중</span>
+            </button>
+            <button
+              class="mode-button"
+              data-mode="openai_realtime"
+              role="tab"
+              aria-selected="false"
+              type="button"
+            >
+              <span class="mode-number">02</span>
+              <strong>OpenAI Realtime</strong>
+              <small>Speech-to-Speech</small>
+              <span class="config-state">확인 중</span>
+            </button>
+            <button
+              class="mode-button"
+              data-mode="hybrid"
+              role="tab"
+              aria-selected="false"
+              type="button"
+            >
+              <span class="mode-number">03</span>
+              <strong>ElevenLabs + OpenAI</strong>
+              <small>Agent + GPT-5.4</small>
+              <span class="config-state">확인 중</span>
+            </button>
+          </div>
+
+          <div class="mode-summary">
+            <div>
+              <span id="provider-label">ElevenLabs Agent</span>
+              <strong id="model-label">Agent 설정 모델</strong>
+            </div>
+            <p id="mode-description">
+              ElevenLabs가 음성 인식, LLM, 음성 합성과 턴 제어를 모두 담당합니다.
+            </p>
+          </div>
+        </section>
+
+        <div class="status-panel" aria-live="polite">
+          <span id="status-dot" class="status-dot" data-state="idle"></span>
+          <div>
+            <strong id="status-text">연결 대기</strong>
+            <span id="session-id">세션 없음</span>
+          </div>
+          <span id="mode-badge" class="mode-badge">IDLE</span>
+        </div>
+
+        <div class="controls">
+          <button id="start-button" class="primary" type="button">대화 시작</button>
+          <button id="mute-button" type="button" disabled>마이크 끄기</button>
+          <button id="stop-button" class="danger" type="button" disabled>종료</button>
+        </div>
+
+        <p id="error-message" class="error" role="alert" hidden></p>
+
+        <section class="metrics" aria-label="현재 세션 측정값">
+          <div>
+            <span>연결 시간</span>
+            <strong id="connect-metric">—</strong>
+          </div>
+          <div>
+            <span>평균 응답</span>
+            <strong id="latency-metric">—</strong>
+          </div>
+          <div>
+            <span>사용자 턴</span>
+            <strong id="turn-metric">0</strong>
+          </div>
+          <div>
+            <span>OpenAI 토큰</span>
+            <strong id="token-metric">—</strong>
+          </div>
+        </section>
+
+        <section class="transcript-section" aria-labelledby="transcript-title">
+          <div class="section-heading">
+            <h2 id="transcript-title">대화 기록</h2>
+            <button id="clear-button" class="text-button" type="button">지우기</button>
+          </div>
+          <div id="transcript" class="transcript" aria-live="polite">
+            <p class="empty-message">대화를 시작하면 메시지가 여기에 표시됩니다.</p>
+          </div>
+
+          <form id="message-form" class="message-form">
+            <label class="sr-only" for="message-input">Agent에게 보낼 텍스트</label>
+            <input
+              id="message-input"
+              type="text"
+              placeholder="텍스트로 같은 질문을 테스트할 수도 있어요"
+              autocomplete="off"
+              disabled
+            />
+            <button id="send-button" type="submit" disabled>보내기</button>
+          </form>
+        </section>
+
+        <footer>
+          마이크 음성과 대화 내용은 선택한 모드에 따라 ElevenLabs 또는 OpenAI로 전송됩니다.
+        </footer>
+      </section>
+    </main>
+
+    <script type="module" src="/static/app.js"></script>
+  </body>
+</html>
+
