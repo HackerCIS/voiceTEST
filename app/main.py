@@ -26,6 +26,32 @@ ELEVENLABS_TOKEN_URL = "https://api.elevenlabs.io/v1/convai/conversation/token"
 OPENAI_REALTIME_SECRET_URL = "https://api.openai.com/v1/realtime/client_secrets"
 OPENAI_RESPONSES_URL = "https://api.openai.com/v1/responses"
 
+DEFAULT_REALTIME_INSTRUCTIONS = """어르신들에게 따뜻한 안부 인사 전화를 걸어 드리는 역할입니다.
+
+부드럽고 다정하며 친근한 말투로 대화해 주세요. 한 번에 짧은 문장으로, 기다리지 않게 빠르게 이야기하세요. 어르신이 불편한 점이나 도움이 필요한지 간단히 물어봐 주세요.
+
+(실제 대화는 곧고 따뜻하게, 5~7턴의 짧은 왕복 대화로 진행됩니다.)
+
+# 참고사항
+
+- 너무 길거나 어려운 말은 사용하지 마세요.
+- 밝고 정감 있게, 천천히 또박또박 말해 주세요.
+- 건강, 식사, 생활 편의 등에 대해 간단히 안부를 묻고, 대화 흐름을 자연스럽게 이어가세요."""
+
+DEFAULT_HYBRID_INSTRUCTIONS = """당신은 ElevenLabs 음성 에이전트의 대화를 담당하는 GPT-5.4입니다. 어르신들에게 따뜻한 안부 인사 전화를 걸어 드리는 역할입니다.
+
+부드럽고 다정하며 친근한 말투로 대화해 주세요. 답변은 ElevenLabs가 음성으로 읽어 주므로, 말로 들었을 때 자연스러운 짧은 문장만 출력하세요. 어르신이 불편한 점이나 도움이 필요한지 간단히 물어봐 주세요.
+
+# 대화 원칙
+
+- 한 번에 한두 개의 짧고 쉬운 문장만 말하세요.
+- 사용자의 말에 먼저 따뜻하게 반응한 뒤, 질문은 한 번에 하나만 하세요.
+- 너무 길거나 어려운 말, 목록, 제목, 마크다운 표기는 사용하지 마세요.
+- 밝고 정감 있게, 천천히 또박또박 들리는 표현을 사용하세요.
+- 건강, 식사, 생활 편의에 대해 간단히 묻고 자연스럽게 이어가세요.
+- ElevenLabs가 이미 첫 인사를 했다면 인사를 반복하지 말고 바로 다음 대화를 이어가세요.
+- 전체 대화는 5~7턴의 짧은 왕복을 목표로 하세요."""
+
 
 @dataclass(frozen=True)
 class RuntimeConfig:
@@ -42,6 +68,7 @@ class RuntimeConfig:
     openai_realtime_language: str
     openai_realtime_instructions: str
     openai_llm_model: str
+    openai_llm_instructions: str
     openai_prompt_id: str
     openai_prompt_version: str
     openai_prompt_variables_json: str
@@ -70,7 +97,7 @@ def get_runtime_config() -> RuntimeConfig:
             "OPENAI_REALTIME_MODEL", "gpt-realtime-2.1"
         ).strip(),
         openai_realtime_voice=os.getenv(
-            "OPENAI_REALTIME_VOICE", "marin"
+            "OPENAI_REALTIME_VOICE", "cedar"
         ).strip(),
         openai_realtime_transcription_model=os.getenv(
             "OPENAI_REALTIME_TRANSCRIPTION_MODEL", "gpt-transcribe"
@@ -80,9 +107,13 @@ def get_runtime_config() -> RuntimeConfig:
         ).strip(),
         openai_realtime_instructions=os.getenv(
             "OPENAI_REALTIME_INSTRUCTIONS",
-            "한국어로 자연스럽고 간결하게 답하는 음성 어시스턴트입니다.",
+            DEFAULT_REALTIME_INSTRUCTIONS,
         ).strip(),
         openai_llm_model=os.getenv("OPENAI_LLM_MODEL", "gpt-5.4").strip(),
+        openai_llm_instructions=(
+            os.getenv("OPENAI_LLM_INSTRUCTIONS", "").strip()
+            or DEFAULT_HYBRID_INSTRUCTIONS
+        ),
         openai_prompt_id=os.getenv("OPENAI_PROMPT_ID", "").strip(),
         openai_prompt_version=os.getenv("OPENAI_PROMPT_VERSION", "").strip(),
         openai_prompt_variables_json=os.getenv(
@@ -450,6 +481,7 @@ async def openai_responses_proxy(request: Request) -> JSONResponse | StreamingRe
 
     body["model"] = config.openai_llm_model
     body["stream"] = True
+    body["instructions"] = config.openai_llm_instructions
     body.pop("elevenlabs_extra_body", None)
     body.pop("user_id", None)
     configured_prompt = prompt_config(config)

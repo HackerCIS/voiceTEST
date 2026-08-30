@@ -5,6 +5,8 @@ import httpx
 from fastapi.testclient import TestClient
 
 from app.main import (
+    DEFAULT_HYBRID_INSTRUCTIONS,
+    DEFAULT_REALTIME_INSTRUCTIONS,
     ELEVENLABS_TOKEN_URL,
     OPENAI_REALTIME_SECRET_URL,
     app,
@@ -12,6 +14,13 @@ from app.main import (
     fetch_openai_realtime_secret,
     get_runtime_config,
 )
+
+
+def test_default_voice_prompts_do_not_include_examples() -> None:
+    for prompt in (DEFAULT_REALTIME_INSTRUCTIONS, DEFAULT_HYBRID_INSTRUCTIONS):
+        assert "# 예시" not in prompt
+        assert "사용자:" not in prompt
+        assert "AI:" not in prompt
 
 
 def test_session_requires_agent_id(monkeypatch) -> None:
@@ -80,7 +89,11 @@ def test_fetch_openai_realtime_secret_uses_latest_config(monkeypatch) -> None:
     monkeypatch.setenv("OPENAI_PROJECT_ID", "proj_test")
     monkeypatch.setenv("OPENAI_ORG_ID", "org_test")
     monkeypatch.setenv("OPENAI_REALTIME_MODEL", "gpt-realtime-2.1")
-    monkeypatch.setenv("OPENAI_REALTIME_VOICE", "marin")
+    monkeypatch.setenv("OPENAI_REALTIME_VOICE", "cedar")
+    monkeypatch.setenv(
+        "OPENAI_REALTIME_INSTRUCTIONS",
+        DEFAULT_REALTIME_INSTRUCTIONS,
+    )
     config = get_runtime_config()
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -90,7 +103,8 @@ def test_fetch_openai_realtime_secret_uses_latest_config(monkeypatch) -> None:
         assert request.headers["openai-organization"] == "org_test"
         body = json.loads(request.content)
         assert body["session"]["model"] == "gpt-realtime-2.1"
-        assert body["session"]["audio"]["output"]["voice"] == "marin"
+        assert body["session"]["instructions"] == DEFAULT_REALTIME_INSTRUCTIONS
+        assert body["session"]["audio"]["output"]["voice"] == "cedar"
         assert body["session"]["audio"]["input"]["turn_detection"]["type"] == "semantic_vad"
         return httpx.Response(
             200,
@@ -131,6 +145,7 @@ def test_custom_llm_proxy_accepts_elevenlabs_responses_path(monkeypatch) -> None
 def test_custom_llm_proxy_forces_model_and_streams_sse(monkeypatch) -> None:
     monkeypatch.setenv("OPENAI_API_KEY", "openai_secret")
     monkeypatch.setenv("OPENAI_LLM_MODEL", "gpt-5.4")
+    monkeypatch.setenv("OPENAI_LLM_INSTRUCTIONS", "elder check-in prompt")
     monkeypatch.setenv("CUSTOM_LLM_SHARED_SECRET", "proxy_secret")
 
     class EventStream(httpx.AsyncByteStream):
@@ -142,6 +157,7 @@ def test_custom_llm_proxy_forces_model_and_streams_sse(monkeypatch) -> None:
         body = json.loads(request.content)
         assert body["model"] == "gpt-5.4"
         assert body["stream"] is True
+        assert body["instructions"] == "elder check-in prompt"
         return httpx.Response(
             200,
             headers={"Content-Type": "text/event-stream"},
@@ -154,7 +170,12 @@ def test_custom_llm_proxy_forces_model_and_streams_sse(monkeypatch) -> None:
         response = client.post(
             "/v1/responses",
             headers={"Authorization": "Bearer proxy_secret"},
-            json={"model": "ignored", "input": "hello", "stream": False},
+            json={
+                "model": "ignored",
+                "instructions": "ignored ElevenLabs instructions",
+                "input": "hello",
+                "stream": False,
+            },
         )
 
     asyncio.run(mock_client.aclose())

@@ -312,6 +312,19 @@ function sendRealtimeEvent(dataChannel, event) {
   dataChannel.send(JSON.stringify(event));
 }
 
+function requestInitialRealtimeGreeting(dataChannel) {
+  sendRealtimeEvent(dataChannel, {
+    type: "response.create",
+    response: {
+      input: [],
+      output_modalities: ["audio"],
+      metadata: { purpose: "initial_greeting" },
+      instructions:
+        "지금 대화를 먼저 시작하세요. 어르신께 짧고 따뜻한 안부 인사를 건네고, 오늘 기분이나 상태를 묻는 질문 하나만 하세요. 특정 문구를 그대로 반복하지 말고 자연스럽게 표현을 달리하세요.",
+    },
+  });
+}
+
 async function startOpenAIRealtimeSession(runId) {
   if (!navigator.mediaDevices?.getUserMedia) {
     throw new Error("이 브라우저에서는 마이크를 사용할 수 없습니다.");
@@ -327,13 +340,21 @@ async function startOpenAIRealtimeSession(runId) {
 
   const mediaStream = await navigator.mediaDevices.getUserMedia({ audio: true });
   const microphoneTrack = mediaStream.getAudioTracks()[0];
+  // Prevent ambient sound/VAD from interrupting the assistant's first greeting.
+  microphoneTrack.enabled = false;
   peerConnection.addTrack(microphoneTrack, mediaStream);
   peerConnection.ontrack = (event) => {
     audioElement.srcObject = event.streams[0];
+    audioElement.play().catch((error) => {
+      console.error("OpenAI Realtime audio playback failed", error);
+      showError("브라우저가 Realtime 음성 재생을 막았습니다. 연결을 종료한 뒤 다시 시작해 주세요.");
+    });
   };
 
   let closed = false;
   let sessionId = token.sessionId;
+  let initialGreetingRequested = false;
+  let initialGreetingCompleted = false;
   const assistantDrafts = new Map();
   const deliveredAssistantItems = new Set();
 
@@ -368,6 +389,20 @@ async function startOpenAIRealtimeSession(runId) {
     if (event.type === "session.created" || event.type === "session.updated") {
       sessionId = event.session?.id || sessionId;
       if (sessionId) elements.sessionId.textContent = sessionId;
+    }
+    if (event.type === "session.created" && !initialGreetingRequested) {
+      initialGreetingRequested = true;
+      elements.modeBadge.textContent = "첫 인사 준비 중";
+      try {
+        requestInitialRealtimeGreeting(dataChannel);
+      } catch (error) {
+        microphoneTrack.enabled = !isMuted;
+        showError(
+          error instanceof Error
+            ? error.message
+            : "OpenAI Realtime 첫 인사를 요청하지 못했습니다.",
+        );
+      }
     }
 
     if (event.type === "input_audio_buffer.speech_started") {
@@ -404,8 +439,22 @@ async function startOpenAIRealtimeSession(runId) {
     if (event.type === "response.done") {
       elements.modeBadge.textContent = "듣는 중";
       addTokenUsage(event.response?.usage);
+      if (initialGreetingRequested && !initialGreetingCompleted) {
+        initialGreetingCompleted = true;
+        microphoneTrack.enabled = !isMuted;
+        if (event.response?.status === "failed") {
+          showError(
+            event.response?.status_details?.error?.message ||
+              "OpenAI Realtime 첫 인사 생성에 실패했습니다.",
+          );
+        }
+      }
     }
     if (event.type === "error") {
+      if (initialGreetingRequested && !initialGreetingCompleted) {
+        microphoneTrack.enabled = !isMuted;
+      }
+      console.error("OpenAI Realtime event error", event);
       showError(event.error?.message || "OpenAI Realtime 오류가 발생했습니다.");
     }
   };

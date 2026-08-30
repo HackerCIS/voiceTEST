@@ -37,19 +37,25 @@ Project 전용 API key라면 `OPENAI_PROJECT_ID`와 `OPENAI_ORG_ID`는 대개 �
 
 ```dotenv
 OPENAI_REALTIME_MODEL=gpt-realtime-2.1
-OPENAI_REALTIME_VOICE=marin
+OPENAI_REALTIME_VOICE=cedar
 OPENAI_REALTIME_TRANSCRIPTION_MODEL=gpt-transcribe
 OPENAI_REALTIME_LANGUAGE=ko
-OPENAI_REALTIME_INSTRUCTIONS=한국어로 자연스럽고 간결하게 답하는 음성 어시스턴트입니다.
+OPENAI_REALTIME_INSTRUCTIONS="어르신들에게 따뜻한 안부 인사 전화를 걸어 드리는 역할입니다. ..."
 ```
 
-FastAPI가 표준 OpenAI key로 단기 client secret을 발급하고, 브라우저는 그 secret으로 OpenAI Realtime WebRTC에 연결합니다. 표준 API key는 브라우저에 노출되지 않습니다.
+전체 기본 프롬프트는 `.env.example`에 들어 있습니다. FastAPI가 표준 OpenAI
+key로 단기 client secret을 발급하고, 브라우저는 그 secret으로 OpenAI Realtime
+WebRTC에 연결합니다. 서버의 `session.created` 준비 완료 이벤트를 받은 뒤 브라우저가
+`response.create`를 한 번 보내 AI의 첫 안부 인사를 생성합니다. 첫 인사가 끝날 때까지
+마이크 입력을 잠시 멈춰 VAD가 첫 응답을 끊지 않도록 합니다. 표준 API key는 브라우저에
+노출되지 않습니다.
 
 ### ElevenLabs Agent + OpenAI GPT-5.4
 
 ```dotenv
 ELEVENLABS_OPENAI_AGENT_ID=agent_hybrid_xxx
 OPENAI_LLM_MODEL=gpt-5.4
+OPENAI_LLM_INSTRUCTIONS="당신은 ElevenLabs 음성 에이전트의 대화를 담당하는 GPT-5.4입니다. ..."
 CUSTOM_LLM_SHARED_SECRET=충분히_긴_임의의_비밀값
 PUBLIC_BASE_URL=https://your-domain-or-ngrok.app
 ```
@@ -62,7 +68,10 @@ OPENAI_PROMPT_VERSION=1
 OPENAI_PROMPT_VARIABLES_JSON={"brand":"Example"}
 ```
 
-Prompt ID를 비워두면 ElevenLabs Agent가 보내는 system prompt와 대화 내역을 그대로 GPT-5.4에 전달합니다.
+전체 기본 프롬프트는 `.env.example`에 들어 있습니다. 서버는
+`OPENAI_LLM_INSTRUCTIONS`를 GPT-5.4의 `instructions`로 설정하고, ElevenLabs
+Agent가 보내는 대화 내역은 그대로 전달합니다. Prompt ID는 OpenAI Platform에
+저장된 Prompt를 추가로 사용할 때만 입력합니다.
 
 ## 2. Hybrid Agent 한 번만 설정하기
 
