@@ -28,6 +28,13 @@ const MODE_INFO = {
     fallbackModel: "gpt-realtime · 070",
     description: "내 070 번호로 전화를 받거나 원하는 번호로 전화를 걸어 OpenAI Realtime과 대화하세요.",
   },
+  livekit_phone: {
+    label: "LiveKit Phone",
+    supportsLatency: false,
+    provider: "LiveKit · ClawOps SIP",
+    fallbackModel: "기존 LiveKit 상담사",
+    description: "ClawOps SIP 트렁크로 전화를 LiveKit 방에 붙입니다. 상담 STT·LLM·TTS는 기존 LiveKit Agent 워커가 담당합니다.",
+  },
 };
 
 const elements = {
@@ -59,6 +66,14 @@ const elements = {
   phoneNumber: document.querySelector("#phone-to-number"),
   phoneFromNumber: document.querySelector("#phone-from-number"),
   phoneHelp: document.querySelector("#phone-help"),
+  livekitSettings: document.querySelector("#livekit-settings"),
+  livekitDirections: [...document.querySelectorAll('[name="livekit-direction"]')],
+  livekitDestination: document.querySelector("#livekit-destination"),
+  livekitNumber: document.querySelector("#livekit-to-number"),
+  livekitFromNumber: document.querySelector("#livekit-from-number"),
+  livekitSipUri: document.querySelector("#livekit-sip-uri"),
+  livekitChecklist: document.querySelector("#livekit-checklist"),
+  livekitHelp: document.querySelector("#livekit-help"),
 };
 
 let selectedMode = "elevenlabs";
@@ -70,6 +85,7 @@ let isMuted = false;
 let healthData = null;
 let isAssistantSpeaking = false;
 let phoneDirection = "inbound";
+let livekitDirection = "inbound";
 
 const metrics = {
   startedAt: 0,
@@ -143,12 +159,31 @@ function isModeConfigured(mode = selectedMode) {
   return healthData?.modes?.[mode]?.configured ?? true;
 }
 
+function renderLivekitChecklist() {
+  if (!elements.livekitChecklist) return;
+  const items = healthData?.modes?.livekit_phone?.checklist || [];
+  elements.livekitChecklist.replaceChildren();
+  items.forEach((item) => {
+    const li = document.createElement("li");
+    li.textContent = `${item.done ? "✓" : "○"} ${item.label}`;
+    elements.livekitChecklist.append(li);
+  });
+}
+
 function updateControls() {
   const busy = isConnecting || uiConnected;
-  const phoneMode = selectedMode === "clawops";
-  const outbound = phoneDirection === "outbound";
-  elements.start.disabled = busy || !isModeConfigured()
-    || (phoneMode && outbound && !elements.phoneNumber.value.trim());
+  const clawopsMode = selectedMode === "clawops";
+  const livekitMode = selectedMode === "livekit_phone";
+  const phoneMode = clawopsMode || livekitMode;
+  const outbound = clawopsMode
+    ? phoneDirection === "outbound"
+    : livekitDirection === "outbound";
+  const needsOutboundNumber = phoneMode && outbound && (
+    clawopsMode
+      ? !elements.phoneNumber.value.trim()
+      : !elements.livekitNumber?.value.trim()
+  );
+  elements.start.disabled = busy || !isModeConfigured() || needsOutboundNumber;
   elements.stop.disabled = !busy;
   elements.mute.disabled = !uiConnected || phoneMode;
   elements.messageInput.disabled = phoneMode;
@@ -158,8 +193,9 @@ function updateControls() {
     button.disabled = busy;
   });
   elements.sessionPanel.classList.toggle("phone-mode", phoneMode);
-  elements.phoneSettings.hidden = !phoneMode;
-  elements.phoneDestination.hidden = !outbound;
+  elements.phoneSettings.hidden = !clawopsMode;
+  if (elements.livekitSettings) elements.livekitSettings.hidden = !livekitMode;
+  elements.phoneDestination.hidden = !outbound || !clawopsMode;
   elements.phoneNumber.disabled = busy;
   elements.phoneDirections.forEach((input) => {
     input.disabled = busy;
@@ -169,11 +205,36 @@ function updateControls() {
   elements.phoneHelp.textContent = outbound
     ? "전화를 걸면 입력한 번호로 전화가 옵니다. 전화를 받아 AI와 대화해 주세요."
     : "수신 대기를 시작한 뒤 내 070 번호로 전화해 주세요.";
+  if (elements.livekitDestination) {
+    elements.livekitDestination.hidden = !livekitMode || !outbound;
+  }
+  if (elements.livekitNumber) elements.livekitNumber.disabled = busy;
+  elements.livekitDirections?.forEach((input) => {
+    input.disabled = busy;
+    input.checked = input.value === livekitDirection;
+  });
+  if (elements.livekitFromNumber) {
+    elements.livekitFromNumber.textContent =
+      healthData?.modes?.livekit_phone?.fromNumber
+      || healthData?.modes?.clawops?.fromNumber
+      || "설정 필요";
+  }
+  if (elements.livekitSipUri) {
+    elements.livekitSipUri.textContent = healthData?.modes?.livekit_phone?.sipUri || "—";
+  }
+  if (elements.livekitHelp) {
+    elements.livekitHelp.textContent = outbound
+      ? "아웃바운드는 LiveKit CreateSIPParticipant → ClawOps 트렁크(미검증 PoC)입니다. 실패 시 플랜B(REST+Stream)를 검토하세요."
+      : "인바운드: ClawOps SIP(TLS) → LiveKit trunk → 기존 워커. 휴대폰에서 070으로 걸어 테스트하세요.";
+  }
+  if (livekitMode) renderLivekitChecklist();
   elements.mute.hidden = phoneMode;
   elements.messageForm.hidden = phoneMode;
   elements.metricsPanel.hidden = phoneMode;
-  if (phoneMode) {
+  if (clawopsMode) {
     elements.start.textContent = outbound ? "전화 걸기" : "수신 대기 시작";
+  } else if (livekitMode) {
+    elements.start.textContent = outbound ? "SIP 발신 PoC" : "인바운드 점검 시작";
   } else {
     elements.start.textContent = "대화 시작";
   }
@@ -737,6 +798,75 @@ function attachPhoneSession(runId, data) {
   };
 }
 
+
+async function startLivekitSession(runId) {
+  const livekit = healthData?.modes?.livekit_phone || {};
+  clearTranscript();
+  if (livekitDirection === "outbound") {
+    const toNumber = elements.livekitNumber.value.trim();
+    const data = await requestJson("/api/livekit-phone/outbound", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ toNumber }),
+    });
+    appendMessage(
+      "agent",
+      `LiveKit SIP 발신 PoC: ${data.fromNumber || "070"} → ${data.toNumber} (room ${data.roomName}). ${data.note || ""}`,
+      { trackTurn: false },
+    );
+    markConnected(data.sipCallId || data.roomName || runId);
+    return {
+      id: data.sipCallId || data.roomName || runId,
+      end: async () => {},
+      setMuted: () => {},
+      sendText: () => {
+        throw new Error("LiveKit Phone 모드에서는 텍스트 입력을 지원하지 않습니다.");
+      },
+    };
+  }
+
+  const roomName = `${livekit.roomPrefix || "call-"}lab-${runId.slice(0, 8)}`;
+  let tokenInfo = null;
+  try {
+    tokenInfo = await requestJson("/api/livekit-phone/token", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ roomName }),
+    });
+  } catch (error) {
+    console.warn(error);
+  }
+  const fromNumber = livekit.fromNumber || healthData?.modes?.clawops?.fromNumber || "070";
+  appendMessage(
+    "agent",
+    `인바운드 대기 안내: 휴대폰에서 ${fromNumber} 로 전화하세요. ClawOps SIP(TLS) → LiveKit trunk → 기존 Agent 워커가 받아야 합니다.`,
+    { trackTurn: false },
+  );
+  if (tokenInfo?.participantToken) {
+    appendMessage(
+      "agent",
+      `모니터 토큰 발급됨 (room ${tokenInfo.roomName}). 워커/LiveKit 콘솔에서 SIP 참가자 입장을 확인하세요.`,
+      { trackTurn: false },
+    );
+  } else {
+    appendMessage(
+      "agent",
+      "모니터 토큰은 LiveKit 자격 증명이 준비되면 발급됩니다. 체크리스트의 미완료 항목을 확인하세요.",
+      { trackTurn: false },
+    );
+  }
+  renderLivekitChecklist();
+  markConnected(roomName);
+  return {
+    id: roomName,
+    end: async () => {},
+    setMuted: () => {},
+    sendText: () => {
+      throw new Error("LiveKit Phone 모드에서는 텍스트 입력을 지원하지 않습니다.");
+    },
+  };
+}
+
 async function startSelectedMode() {
   if (activeSession || isConnecting || !isModeConfigured()) return;
 
@@ -746,6 +876,15 @@ async function startSelectedMode() {
     } catch (error) {
       showError(error.message);
       elements.phoneNumber.focus();
+      return;
+    }
+  }
+  if (selectedMode === "livekit_phone" && livekitDirection === "outbound") {
+    try {
+      normalizePhoneNumber(elements.livekitNumber.value);
+    } catch (error) {
+      showError(error.message);
+      elements.livekitNumber?.focus();
       return;
     }
   }
@@ -762,11 +901,13 @@ async function startSelectedMode() {
 
   try {
     const session =
-      selectedMode === "clawops"
-        ? await startClawopsSession(runId)
-        : selectedMode === "openai_realtime"
-          ? await startOpenAIRealtimeSession(runId)
-          : await startElevenLabsSession(selectedMode, runId);
+      selectedMode === "livekit_phone"
+        ? await startLivekitSession(runId)
+        : selectedMode === "clawops"
+          ? await startClawopsSession(runId)
+          : selectedMode === "openai_realtime"
+            ? await startOpenAIRealtimeSession(runId)
+            : await startElevenLabsSession(selectedMode, runId);
 
     if (currentRunId !== runId) {
       await session.end();
@@ -907,4 +1048,13 @@ window.addEventListener("beforeunload", () => {
 resetMetrics();
 dashboard.refresh();
 updateControls();
+elements.livekitDirections?.forEach((input) => {
+  input.addEventListener("change", () => {
+    if (isConnecting || uiConnected) return;
+    livekitDirection = input.value;
+    updateControls();
+  });
+});
+elements.livekitNumber?.addEventListener("input", () => updateControls());
 loadHealth();
+

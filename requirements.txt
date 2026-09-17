@@ -6,3 +6,6 @@ uvicorn[standard]>=0.35,<1
 # Optional ClawOps Trial phone (install separately):
 #   pip install -r requirements-clawops.txt
 # or: pip install "clawops[agent,openai]>=0.56,<1"
+
+# Optional LiveKit Phone (mode 05):
+#   pip install -r requirements-livekit.txt
