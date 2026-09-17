@@ -1,14 +1,16 @@
 # Voice Model Comparison Lab
 
-같은 브라우저 화면에서 세 가지 음성 Agent 구성을 바꿔가며 비교하는 FastAPI 프로젝트입니다.
+같은 브라우저 화면에서 세 가지 음성 Agent 구성을 비교하고, ClawOps 실제 전화도 테스트하는 FastAPI 프로젝트입니다.
 
 | 버튼 | 음성·턴 제어 | 답변 생성 |
 |---|---|---|
 | ElevenLabs | ElevenLabs Agent | 현재 Agent 설정 LLM |
 | OpenAI Realtime | OpenAI Realtime | `gpt-realtime-2.1` |
 | ElevenLabs + OpenAI | ElevenLabs Agent | FastAPI 프록시를 통한 `gpt-5.4` |
+| ClawOps Phone | ClawOps 070 전화 | OpenAI Realtime |
 
 화면에는 연결 시간, 평균 응답 지연, 사용자 턴 수와 OpenAI Realtime 토큰 사용량이 표시됩니다.
+브라우저 음성 모드의 턴별 응답 지연은 누적·비교할 수 있습니다. ClawOps 전화 모드는 브라우저 마이크·텍스트 입력과 응답 지연 측정을 지원하지 않습니다.
 
 ## 1. 환경 변수
 
@@ -118,16 +120,39 @@ curl http://127.0.0.1:8000/api/health
 ```bash
 pip install -r requirements-dev.txt
 pytest -q
+node --test tests/latency.test.mjs
 ```
 
-## 4. 공정하게 비교하는 방법
+## 4. 응답 레이턴시 비교 화면
+
+1. 엔진을 선택하고 **대화 시작**을 누릅니다.
+2. 마이크로 질문하거나 **공통 테스트 문장**을 보냅니다. 문장은 엔진을 바꿔도 유지됩니다.
+3. **첫 음성 응답까지**에서 대기 시간을 실시간으로 확인합니다. 첫 음성 시작 신호가 오면 측정값이 확정됩니다.
+4. 대화를 종료하고 다른 엔진에서 같은 질문을 반복합니다. **모델별 응답 지연**에 평균·최근·중앙값·P95·표본 수가 누적됩니다.
+5. **턴별 측정 기록**에서 최근 20개를 확인하거나 **JSON 내보내기**로 전체 기록을 저장합니다. 초기화는 대화 종료 후 가능하며 **되돌리기**로 복구할 수 있습니다.
+
+측정은 브라우저의 단조 시계인 `performance.now()`를 사용합니다. 입력 기준이 다른 값은 별도 탭에서 집계합니다.
+
+| 비교 탭 | 시작 시점 | 끝 시점 |
+|---|---|---|
+| 음성 | OpenAI `input_audio_buffer.speech_stopped` 수신 / ElevenLabs VAD 점수가 발화(≥0.6)에서 침묵(≤0.35)으로 전환된 시점 | OpenAI `output_audio_buffer.started` 수신 / ElevenLabs `onModeChange`의 `speaking` 전환 |
+| 텍스트 | 브라우저에서 텍스트 전송 직전 | 위와 같은 첫 음성 시작 신호 |
+| 전사 · 참고 | ElevenLabs의 발화 종료 신호가 없을 때 사용자 전사 수신 | ElevenLabs의 첫 `speaking` 전환 |
+
+전사 메시지만 도착해서는 음성 응답이 완료된 것으로 기록하지 않습니다. OpenAI WebRTC는 오디오 델타가 아닌 [오디오 버퍼 시작 이벤트](https://developers.openai.com/api/reference/resources/realtime/server-events)를 사용합니다. ElevenLabs는 현재 사용 중인 [JavaScript SDK](https://elevenlabs.io/docs/eleven-agents/libraries/java-script)의 음성 모드와 VAD 콜백을 사용합니다. 발화 종료 기준을 확인할 수 없는 값은 음성 통계에 섞지 않습니다.
+
+첫 인사는 표본으로 만들지 않습니다. 응답 전에 발화를 재개하거나, 연결을 종료하거나, 응답 오류·45초 초과가 발생한 턴은 사유를 기록하고 통계에서 제외합니다. 음성이 시작된 뒤 전사만 도착하여 시작 시점을 복원할 수 없으면 `시작 기준 없음`으로 제외합니다. 같은 입력/응답 이벤트는 중복 집계하지 않으며, 종료한 세션의 늦은 이벤트도 새 세션에 반영하지 않습니다. 음성이 이미 시작된 뒤의 끼어들기는 확정된 첫 응답 시간을 유지합니다.
+
+모델명·입력 기준·시간·결과만 브라우저 `localStorage`에 최근 600개까지 저장합니다. 대화 내용과 API 키는 측정 기록에 저장하지 않습니다. 새로고침과 엔진 전환 후에도 기록이 유지되며, 저장을 사용할 수 없는 브라우저에서는 현재 화면에서 측정하고 JSON으로 내보낼 수 있습니다. 통계 카드는 현재 설정된 모델만 집계하고 변경 전 모델의 기록은 내역과 내보내기에 보존합니다. P95는 nearest-rank 방식이며 표본이 적으면 최댓값과 같을 수 있습니다.
+
+## 5. 공정하게 비교하는 방법
 
 1. 세 모드에 같은 역할, 금지사항, 답변 길이 지침을 넣습니다.
 2. 조용한 동일 공간과 같은 마이크에서 같은 질문 세트를 사용합니다.
 3. 각 모드를 최소 10회 반복하고 평균뿐 아니라 느린 응답도 기록합니다.
 4. 첫 응답 지연, 끼어들기, 한국어 고유명사 인식, 답변 정확도와 분당 비용을 함께 비교합니다.
 
-브라우저의 `평균 응답`은 사용자 발화 종료 또는 텍스트 전송부터 Agent 응답 시작까지의 근사치입니다. 네트워크·브라우저 이벤트 시점이 서로 달라 절대적인 벤치마크보다는 동일 환경의 상대 비교용으로 사용하세요.
+측정값은 네트워크·음성 처리 경로를 포함한 **브라우저 관측 기준의 근사 지연**입니다. 실제 스피커 재생 시각이나 순수 LLM 연산 시간과 다르며, 공급자마다 발화 종료 및 음성 시작 이벤트의 전달 시점도 다릅니다. 동일 환경·동일 입력 기준의 상대 비교용으로 사용하세요. ElevenLabs Agent의 내부 LLM 변경은 현재 표시되는 Agent 설정 모델명만으로 구분할 수 없으므로 Agent 설정을 바꿨다면 기록을 내보낸 뒤 초기화해서 비교하세요.
 
 ## 연결 구조
 
@@ -160,7 +185,7 @@ Browser ── WebRTC ──> ElevenLabs Agent (ASR + turn + TTS)
 
 ## 5. ClawOps Trial phone (070, no SIP)
 
-Separate from the browser comparison lab: a small runnable module that uses
+Available through the **ClawOps Phone** mode in the browser lab, or as a standalone module that uses
 **ClawOpsAgent + OpenAI Realtime** so you can receive (and optionally place)
 real KR 070 calls during a ClawOps Trial. SIP trunks / LiveKit / ngrok are
 **out of scope** for this path — the agent SDK keeps a websocket to ClawOps.
