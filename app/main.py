@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import os
@@ -74,10 +75,23 @@ class RuntimeConfig:
     openai_prompt_variables_json: str
     custom_llm_shared_secret: str
     public_base_url: str
+    clawops_api_key: str
+    clawops_account_id: str
+    clawops_from_number: str
+    clawops_test_to_number: str
 
     @property
     def elevenlabs_is_private(self) -> bool:
         return bool(self.elevenlabs_api_key)
+
+    @property
+    def clawops_configured(self) -> bool:
+        return bool(
+            self.clawops_api_key
+            and self.clawops_account_id
+            and self.clawops_from_number
+            and self.openai_api_key
+        )
 
 
 def get_runtime_config() -> RuntimeConfig:
@@ -123,6 +137,10 @@ def get_runtime_config() -> RuntimeConfig:
             "CUSTOM_LLM_SHARED_SECRET", ""
         ).strip(),
         public_base_url=os.getenv("PUBLIC_BASE_URL", "").strip().rstrip("/"),
+        clawops_api_key=os.getenv("CLAWOPS_API_KEY", "").strip(),
+        clawops_account_id=os.getenv("CLAWOPS_ACCOUNT_ID", "").strip(),
+        clawops_from_number=os.getenv("CLAWOPS_FROM_NUMBER", "").strip(),
+        clawops_test_to_number=os.getenv("CLAWOPS_TEST_TO_NUMBER", "").strip(),
     )
 
 
@@ -378,8 +396,115 @@ async def health() -> dict[str, Any]:
                     if not value
                 ],
             },
+            "clawops": {
+                "configured": config.clawops_configured,
+                "model": f"{config.openai_realtime_model} · 070",
+                "fromNumber": config.clawops_from_number or None,
+                "testToNumber": bool(config.clawops_test_to_number),
+                "missing": [
+                    name
+                    for name, value in (
+                        ("CLAWOPS_API_KEY", config.clawops_api_key),
+                        ("CLAWOPS_ACCOUNT_ID", config.clawops_account_id),
+                        ("CLAWOPS_FROM_NUMBER", config.clawops_from_number),
+                        ("OPENAI_API_KEY", config.openai_api_key),
+                    )
+                    if not value
+                ],
+            },
         },
     }
+
+
+
+_clawops_task: asyncio.Task[None] | None = None
+_clawops_lock = asyncio.Lock()
+
+
+def _clawops_missing(config: RuntimeConfig) -> list[str]:
+    return [
+        name
+        for name, value in (
+            ("CLAWOPS_API_KEY", config.clawops_api_key),
+            ("CLAWOPS_ACCOUNT_ID", config.clawops_account_id),
+            ("CLAWOPS_FROM_NUMBER", config.clawops_from_number),
+            ("OPENAI_API_KEY", config.openai_api_key),
+        )
+        if not value
+    ]
+
+
+async def _run_clawops_inbound() -> None:
+    from app.clawops_phone import serve_inbound
+
+    await serve_inbound()
+
+
+async def _run_clawops_outbound(to_number: str) -> None:
+    from app.clawops_phone import place_outbound
+
+    await place_outbound(to_number)
+
+
+@app.post("/api/clawops/start")
+async def clawops_start() -> dict[str, Any]:
+    """Start Trial phone: outbound if CLAWOPS_TEST_TO_NUMBER set, else inbound listen."""
+    global _clawops_task
+    config = get_runtime_config()
+    missing = _clawops_missing(config)
+    if missing:
+        raise HTTPException(
+            status_code=400,
+            detail=f"ClawOps 설정이 필요합니다: {', '.join(missing)}",
+        )
+
+    async with _clawops_lock:
+        if _clawops_task and not _clawops_task.done():
+            raise HTTPException(
+                status_code=409,
+                detail="이미 ClawOps 전화 세션이 실행 중입니다. 먼저 종료해 주세요.",
+            )
+
+        to_number = config.clawops_test_to_number
+        if to_number:
+            _clawops_task = asyncio.create_task(
+                _run_clawops_outbound(to_number),
+                name="clawops-outbound",
+            )
+            return {
+                "mode": "outbound",
+                "fromNumber": config.clawops_from_number,
+                "toNumber": to_number,
+                "sessionId": f"outbound:{config.clawops_from_number}->{to_number}",
+            }
+
+        _clawops_task = asyncio.create_task(
+            _run_clawops_inbound(),
+            name="clawops-inbound",
+        )
+        return {
+            "mode": "inbound",
+            "fromNumber": config.clawops_from_number,
+            "toNumber": None,
+            "sessionId": f"inbound:{config.clawops_from_number}",
+        }
+
+
+@app.post("/api/clawops/stop")
+async def clawops_stop() -> dict[str, Any]:
+    global _clawops_task
+    async with _clawops_lock:
+        task = _clawops_task
+        _clawops_task = None
+        if task and not task.done():
+            task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
+            except Exception:
+                logger.exception("ClawOps task ended with error after cancel")
+        return {"status": "stopped"}
 
 
 @app.post("/api/session")

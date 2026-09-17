@@ -16,6 +16,11 @@ const MODE_INFO = {
     fallbackModel: "gpt-5.4",
     description: "ElevenLabs가 ASR·TTS·턴 제어를 맡고, FastAPI 프록시를 통해 OpenAI GPT-5.4가 답변을 생성합니다.",
   },
+  clawops: {
+    provider: "ClawOps Phone",
+    fallbackModel: "gpt-realtime · 070",
+    description: "ClawOps Trial 070으로 실제 전화를 걸고 받습니다. OpenAI Realtime이 상담하고, SIP/LiveKit은 쓰지 않습니다.",
+  },
 };
 
 const elements = {
@@ -130,14 +135,20 @@ function isModeConfigured(mode = selectedMode) {
 
 function updateControls() {
   const busy = isConnecting || uiConnected;
+  const phoneMode = selectedMode === "clawops";
   elements.start.disabled = busy || !isModeConfigured();
   elements.stop.disabled = !busy;
-  elements.mute.disabled = !uiConnected;
-  elements.messageInput.disabled = !uiConnected;
-  elements.send.disabled = !uiConnected;
+  elements.mute.disabled = !uiConnected || phoneMode;
+  elements.messageInput.disabled = !uiConnected || phoneMode;
+  elements.send.disabled = !uiConnected || phoneMode;
   elements.modeButtons.forEach((button) => {
     button.disabled = busy;
   });
+  if (phoneMode) {
+    elements.start.textContent = "전화 시작";
+  } else {
+    elements.start.textContent = "대화 시작";
+  }
 }
 
 function clearTranscript() {
@@ -539,6 +550,42 @@ async function startOpenAIRealtimeSession(runId) {
   };
 }
 
+
+async function startClawopsSession(runId) {
+  const data = await requestJson("/api/clawops/start", { method: "POST" });
+  const fromNumber = data.fromNumber || "070";
+  const toNumber = data.toNumber || null;
+  clearTranscript();
+  if (data.mode === "outbound") {
+    appendMessage(
+      "agent",
+      `ClawOps가 ${fromNumber}에서 ${toNumber}로 전화를 겁니다. 휴대폰을 받아 주세요.`,
+      { trackTurn: false },
+    );
+  } else {
+    appendMessage(
+      "agent",
+      `수신 대기 중입니다. 휴대폰에서 ${fromNumber} 로 걸어 주세요. (Trial · SIP 없음)`,
+      { trackTurn: false },
+    );
+  }
+  markConnected(data.sessionId || fromNumber);
+  return {
+    id: data.sessionId || fromNumber,
+    end: async () => {
+      try {
+        await requestJson("/api/clawops/stop", { method: "POST" });
+      } catch (error) {
+        console.error(error);
+      }
+    },
+    setMuted: () => {},
+    sendText: () => {
+      throw new Error("전화 모드에서는 텍스트 입력을 지원하지 않습니다.");
+    },
+  };
+}
+
 async function startSelectedMode() {
   if (activeSession || isConnecting || !isModeConfigured()) return;
 
@@ -553,9 +600,11 @@ async function startSelectedMode() {
 
   try {
     const session =
-      selectedMode === "openai_realtime"
-        ? await startOpenAIRealtimeSession(runId)
-        : await startElevenLabsSession(selectedMode, runId);
+      selectedMode === "clawops"
+        ? await startClawopsSession(runId)
+        : selectedMode === "openai_realtime"
+          ? await startOpenAIRealtimeSession(runId)
+          : await startElevenLabsSession(selectedMode, runId);
 
     if (currentRunId !== runId) {
       await session.end();
