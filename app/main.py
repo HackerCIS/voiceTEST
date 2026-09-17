@@ -15,6 +15,9 @@ from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
+from pydantic import BaseModel, Field
+
+from app.phone_session import PhoneSession, normalize_phone_number
 
 load_dotenv()
 
@@ -331,7 +334,10 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     ):
         app.state.api_client = api_client
         app.state.stream_client = stream_client
-        yield
+        try:
+            yield
+        finally:
+            await clawops_stop()
 
 
 app = FastAPI(
@@ -418,7 +424,17 @@ async def health() -> dict[str, Any]:
 
 
 _clawops_task: asyncio.Task[None] | None = None
+_clawops_session: PhoneSession | None = None
 _clawops_lock = asyncio.Lock()
+
+
+class ClawOpsStartRequest(BaseModel):
+    mode: Literal["inbound", "outbound"] = "inbound"
+    to_number: str = Field(default="", alias="toNumber", max_length=40)
+
+
+class ClawOpsStopRequest(BaseModel):
+    session_id: str = Field(alias="sessionId", min_length=1, max_length=100)
 
 
 def _clawops_missing(config: RuntimeConfig) -> list[str]:
@@ -434,22 +450,17 @@ def _clawops_missing(config: RuntimeConfig) -> list[str]:
     ]
 
 
-async def _run_clawops_inbound() -> None:
-    from app.clawops_phone import serve_inbound
-
-    await serve_inbound()
-
-
-async def _run_clawops_outbound(to_number: str) -> None:
-    from app.clawops_phone import place_outbound
-
-    await place_outbound(to_number)
-
-
 @app.post("/api/clawops/start")
-async def clawops_start() -> dict[str, Any]:
-    """Start Trial phone: outbound if CLAWOPS_TEST_TO_NUMBER set, else inbound listen."""
-    global _clawops_task
+async def clawops_start(payload: ClawOpsStartRequest | None = None) -> dict[str, Any]:
+    """Only an explicit outbound request can place a browser-initiated call."""
+    global _clawops_task, _clawops_session
+    payload = payload or ClawOpsStartRequest()
+    to_number = ""
+    if payload.mode == "outbound":
+        try:
+            to_number = normalize_phone_number(payload.to_number)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
     config = get_runtime_config()
     missing = _clawops_missing(config)
     if missing:
@@ -465,45 +476,50 @@ async def clawops_start() -> dict[str, Any]:
                 detail="이미 ClawOps 전화 세션이 실행 중입니다. 먼저 종료해 주세요.",
             )
 
-        to_number = config.clawops_test_to_number
-        if to_number:
-            _clawops_task = asyncio.create_task(
-                _run_clawops_outbound(to_number),
-                name="clawops-outbound",
-            )
-            return {
-                "mode": "outbound",
-                "fromNumber": config.clawops_from_number,
-                "toNumber": to_number,
-                "sessionId": f"outbound:{config.clawops_from_number}->{to_number}",
-            }
+        from app.clawops_phone import ClawOpsConfigurationError, build_agent
 
+        # Validate imports and construct the agent before reporting success or
+        # launching a background task. Setup errors must remain HTTP errors.
+        try:
+            agent, from_number = build_agent(mode=payload.mode)
+        except ClawOpsConfigurationError as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+        _clawops_session = PhoneSession(agent, from_number, to_number)
         _clawops_task = asyncio.create_task(
-            _run_clawops_inbound(),
-            name="clawops-inbound",
+            _clawops_session.run(),
+            name=f"clawops-{_clawops_session.mode}",
         )
-        return {
-            "mode": "inbound",
-            "fromNumber": config.clawops_from_number,
-            "toNumber": None,
-            "sessionId": f"inbound:{config.clawops_from_number}",
-        }
+        _clawops_session.task = _clawops_task
+        return _clawops_session.snapshot()
+
+
+@app.get("/api/clawops/status")
+async def clawops_status() -> JSONResponse:
+    data = (
+        _clawops_session.snapshot()
+        if _clawops_session
+        else {"sessionId": None, "status": "idle", "active": False}
+    )
+    return JSONResponse(data, headers={"Cache-Control": "no-store"})
 
 
 @app.post("/api/clawops/stop")
-async def clawops_stop() -> dict[str, Any]:
+async def clawops_stop(payload: ClawOpsStopRequest | None = None) -> dict[str, Any]:
     global _clawops_task
     async with _clawops_lock:
-        task = _clawops_task
-        _clawops_task = None
-        if task and not task.done():
-            task.cancel()
+        if _clawops_session:
+            if payload and payload.session_id != _clawops_session.session_id:
+                raise HTTPException(status_code=409, detail="이미 다른 전화 세션으로 변경됐습니다.")
             try:
-                await task
-            except asyncio.CancelledError:
-                pass
-            except Exception:
-                logger.exception("ClawOps task ended with error after cancel")
+                await _clawops_session.stop()
+            except Exception as exc:
+                logger.exception("ClawOps phone stop failed")
+                raise HTTPException(
+                    status_code=502,
+                    detail="전화를 종료하지 못했습니다. 잠시 후 종료 버튼을 다시 눌러 주세요.",
+                ) from exc
+        _clawops_task = None
         return {"status": "stopped"}
 
 

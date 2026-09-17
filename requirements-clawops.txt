@@ -1,4 +1,4 @@
 # Optional extras for ClawOps Trial phone (inbound/outbound 070).
 # Install on top of the FastAPI browser-lab deps.
 -r requirements.txt
-clawops[agent,openai]>=0.56,<1
+clawops[agent,openai]>=0.56,<0.57
