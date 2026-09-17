@@ -1,17 +1,21 @@
-import { Conversation } from "https://esm.sh/@elevenlabs/client@1.23.0";
+import { formatDuration } from "./latency.js?v=20260909-1";
+import { createLatencyDashboard } from "./latency-ui.js?v=20260909-1";
 
 const MODE_INFO = {
   elevenlabs: {
+    label: "ElevenLabs",
     provider: "ElevenLabs Agent",
     fallbackModel: "Agent 설정 모델",
     description: "ElevenLabs가 음성 인식, LLM, 음성 합성과 턴 제어를 모두 담당합니다.",
   },
   openai_realtime: {
+    label: "OpenAI Realtime",
     provider: "OpenAI Realtime",
     fallbackModel: "gpt-realtime-2.1",
     description: "OpenAI Realtime 모델이 WebRTC로 음성을 직접 듣고 바로 음성으로 응답합니다.",
   },
   hybrid: {
+    label: "ElevenLabs + OpenAI",
     provider: "ElevenLabs Agent + OpenAI LLM",
     fallbackModel: "gpt-5.4",
     description: "ElevenLabs가 ASR·TTS·턴 제어를 맡고, FastAPI 프록시를 통해 OpenAI GPT-5.4가 답변을 생성합니다.",
@@ -37,7 +41,6 @@ const elements = {
   messageInput: document.querySelector("#message-input"),
   send: document.querySelector("#send-button"),
   connectMetric: document.querySelector("#connect-metric"),
-  latencyMetric: document.querySelector("#latency-metric"),
   turnMetric: document.querySelector("#turn-metric"),
   tokenMetric: document.querySelector("#token-metric"),
 };
@@ -49,30 +52,25 @@ let isConnecting = false;
 let uiConnected = false;
 let isMuted = false;
 let healthData = null;
+let isAssistantSpeaking = false;
 
 const metrics = {
   startedAt: 0,
-  pendingTurnAt: 0,
-  responseLatencies: [],
   turns: 0,
   tokens: 0,
 };
 
-function formatDuration(milliseconds) {
-  if (!Number.isFinite(milliseconds)) return "—";
-  return milliseconds < 1000
-    ? `${Math.round(milliseconds)}ms`
-    : `${(milliseconds / 1000).toFixed(2)}s`;
-}
+const dashboard = createLatencyDashboard({
+  modeInfo: MODE_INFO,
+  getModel: modeModel,
+  onChange: updateControls,
+});
 
 function resetMetrics() {
   metrics.startedAt = 0;
-  metrics.pendingTurnAt = 0;
-  metrics.responseLatencies = [];
   metrics.turns = 0;
   metrics.tokens = 0;
   elements.connectMetric.textContent = "—";
-  elements.latencyMetric.textContent = "—";
   elements.turnMetric.textContent = "0";
   elements.tokenMetric.textContent = "—";
 }
@@ -90,20 +88,20 @@ function markConnectedMetric() {
   }
 }
 
-function noteUserTurn() {
-  metrics.turns += 1;
-  metrics.pendingTurnAt = performance.now();
+function noteUserTurn(kind, startSource, { key, at } = {}) {
+  const turn = dashboard.tracker.start({ kind, startSource, key, at });
+  if (!turn) return null;
+  metrics.turns = dashboard.tracker.turns;
   elements.turnMetric.textContent = String(metrics.turns);
+  dashboard.selectInput(kind);
+  updateControls();
+  return turn;
 }
 
-function noteAssistantStarted() {
-  if (!metrics.pendingTurnAt) return;
-  metrics.responseLatencies.push(performance.now() - metrics.pendingTurnAt);
-  metrics.pendingTurnAt = 0;
-  const average =
-    metrics.responseLatencies.reduce((sum, value) => sum + value, 0) /
-    metrics.responseLatencies.length;
-  elements.latencyMetric.textContent = formatDuration(average);
+function noteAssistantStarted(endSource, responseId) {
+  isAssistantSpeaking = true;
+  dashboard.tracker.finish(endSource, responseId);
+  updateControls();
 }
 
 function addTokenUsage(usage) {
@@ -133,8 +131,8 @@ function updateControls() {
   elements.start.disabled = busy || !isModeConfigured();
   elements.stop.disabled = !busy;
   elements.mute.disabled = !uiConnected;
-  elements.messageInput.disabled = !uiConnected;
-  elements.send.disabled = !uiConnected;
+  elements.send.disabled = !activeSession || !uiConnected || Boolean(dashboard.tracker.pending) || isAssistantSpeaking;
+  elements.send.textContent = dashboard.tracker.pending ? "측정 중…" : "이 문장 보내기";
   elements.modeButtons.forEach((button) => {
     button.disabled = busy;
   });
@@ -148,12 +146,9 @@ function clearTranscript() {
   elements.transcript.append(emptyMessage);
 }
 
-function appendMessage(role, message, { trackTurn = true } = {}) {
+function appendMessage(role, message) {
   const text = typeof message === "string" ? message.trim() : "";
   if (!text) return;
-
-  if (trackTurn && role === "user") noteUserTurn();
-  if (role === "agent") noteAssistantStarted();
 
   elements.transcript.querySelector(".empty-message")?.remove();
   const item = document.createElement("article");
@@ -177,6 +172,8 @@ function resetSessionUi(reason = "연결 종료") {
   isConnecting = false;
   uiConnected = false;
   isMuted = false;
+  isAssistantSpeaking = false;
+  dashboard.endSession();
   elements.mute.textContent = "마이크 끄기";
   elements.modeBadge.textContent = "IDLE";
   elements.sessionId.textContent = "세션 없음";
@@ -209,7 +206,7 @@ function selectMode(mode) {
   elements.modeButtons.forEach((button) => {
     const active = button.dataset.mode === mode;
     button.classList.toggle("active", active);
-    button.setAttribute("aria-selected", String(active));
+    button.setAttribute("aria-pressed", String(active));
   });
 
   elements.providerLabel.textContent = MODE_INFO[mode].provider;
@@ -221,6 +218,7 @@ function selectMode(mode) {
   showError("");
   clearTranscript();
   resetMetrics();
+  dashboard.selectMode(mode);
   setStatus("연결 대기", "idle");
   updateControls();
 }
@@ -244,6 +242,24 @@ async function getElevenLabsSessionConfig(mode) {
 }
 
 function buildElevenLabsOptions(session, runId) {
+  let vadSpeaking = false;
+  let lastSpeechEnd = null;
+  let speechSinceLastTurn = false;
+  let awaitingUserTranscript = false;
+  let hasAgentSpoken = false;
+  let textEcho = null;
+  const seenUserEvents = new Set();
+  const startVoiceTurn = (key) => {
+    const hasSpeechEnd = speechSinceLastTurn && lastSpeechEnd !== null
+      && performance.now() - lastSpeechEnd < 15000;
+    const turn = noteUserTurn(
+      hasSpeechEnd ? "voice" : "transcript",
+      hasSpeechEnd ? "elevenlabs.vad_score.speech_end" : "elevenlabs.user_transcript",
+      { key, at: hasSpeechEnd ? lastSpeechEnd : undefined },
+    );
+    speechSinceLastTurn = false;
+    return turn;
+  };
   const callbacks = {
     connectionType: "webrtc",
     onConnect: ({ conversationId }) => {
@@ -252,22 +268,75 @@ function buildElevenLabsOptions(session, runId) {
     onDisconnect: () => handleUnexpectedDisconnect(runId),
     onError: (message) => {
       if (runId !== currentRunId) return;
+      dashboard.tracker.cancel("failed");
       showError(
         typeof message === "string" ? message : "ElevenLabs 대화 중 오류가 발생했습니다.",
       );
     },
-    onMessage: ({ message, role, source }) => {
+    onOutgoingEvent: (event) => {
+      if (runId === currentRunId && event.type === "user_message") {
+        textEcho = { text: event.text, at: performance.now() };
+      }
+    },
+    onVadScore: ({ vadScore }) => {
+      if (runId !== currentRunId || isMuted) return;
+      if (vadScore >= 0.6 && !vadSpeaking) {
+        vadSpeaking = true;
+        lastSpeechEnd = null;
+        speechSinceLastTurn = true;
+        dashboard.tracker.cancel("interrupted");
+      } else if (vadScore <= 0.35 && vadSpeaking) {
+        vadSpeaking = false;
+        lastSpeechEnd = performance.now();
+      }
+    },
+    onMessage: ({ message, role, source, event_id }) => {
       if (runId !== currentRunId) return;
-      appendMessage(
-        role === "user" || source === "user" ? "user" : "agent",
-        message,
-      );
+      const isUser = role === "user" || source === "user";
+      if (isUser) {
+        if (!message?.trim()) return;
+        if (event_id != null && seenUserEvents.has(event_id)) return;
+        if (event_id != null) seenUserEvents.add(event_id);
+        if (textEcho?.text === message && performance.now() - textEcho.at < 30000) {
+          textEcho = null;
+          return;
+        }
+        if (awaitingUserTranscript) {
+          awaitingUserTranscript = false;
+        } else if (!isAssistantSpeaking || dashboard.tracker.pending) {
+          startVoiceTurn(event_id == null ? undefined : `elevenlabs:${event_id}`);
+        } else if (!speechSinceLastTurn) {
+          // Audio is already playing and no speech boundary was observed.
+          // A late transcript cannot produce a trustworthy first-audio value.
+          noteUserTurn("transcript", "elevenlabs.user_transcript", {
+            key: event_id == null ? undefined : `elevenlabs:${event_id}`,
+          });
+          dashboard.tracker.cancel("unavailable");
+        }
+      } else if (!hasAgentSpoken && !dashboard.tracker.pending) {
+        // Lock text submission during an unsolicited greeting's generation,
+        // before its speaking callback has arrived.
+        isAssistantSpeaking = true;
+        updateControls();
+      }
+      appendMessage(isUser ? "user" : "agent", message);
     },
     onModeChange: ({ mode }) => {
       if (runId !== currentRunId) return;
       elements.modeBadge.textContent =
         mode === "speaking" ? "AGENT 말하는 중" : "듣는 중";
-      if (mode === "speaking") noteAssistantStarted();
+      isAssistantSpeaking = mode === "speaking";
+      if (isAssistantSpeaking) {
+        hasAgentSpoken = true;
+        // Audio may precede final transcription. An observed VAD boundary can
+        // still anchor that turn; the later transcript must not arm it twice.
+        if (!dashboard.tracker.pending && speechSinceLastTurn && lastSpeechEnd !== null) {
+          startVoiceTurn();
+          awaitingUserTranscript = true;
+        }
+        noteAssistantStarted("elevenlabs.onModeChange.speaking");
+      }
+      updateControls();
     },
     onStatusChange: ({ status }) => {
       if (runId !== currentRunId) return;
@@ -287,12 +356,15 @@ function buildElevenLabsOptions(session, runId) {
 
 async function startElevenLabsSession(mode, runId) {
   const sessionConfig = await getElevenLabsSessionConfig(mode);
+  const { Conversation } = await import("https://esm.sh/@elevenlabs/client@1.23.0");
+  if (runId !== currentRunId) throw new Error("연결이 취소되었습니다.");
 
   if (!navigator.mediaDevices?.getUserMedia) {
     throw new Error("이 브라우저에서는 마이크를 사용할 수 없습니다.");
   }
   const permissionStream = await navigator.mediaDevices.getUserMedia({ audio: true });
   permissionStream.getTracks().forEach((track) => track.stop());
+  if (runId !== currentRunId) throw new Error("연결이 취소되었습니다.");
 
   const conversation = await Conversation.startSession(
     buildElevenLabsOptions(sessionConfig, runId),
@@ -331,6 +403,12 @@ async function startOpenAIRealtimeSession(runId) {
   }
 
   const token = await requestJson("/api/openai/realtime-token", { method: "POST" });
+  if (runId !== currentRunId) throw new Error("연결이 취소되었습니다.");
+  const mediaStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+  if (runId !== currentRunId) {
+    mediaStream.getTracks().forEach((track) => track.stop());
+    throw new Error("연결이 취소되었습니다.");
+  }
   const peerConnection = new RTCPeerConnection();
   const dataChannel = peerConnection.createDataChannel("oai-events");
   const audioElement = document.createElement("audio");
@@ -338,7 +416,6 @@ async function startOpenAIRealtimeSession(runId) {
   audioElement.hidden = true;
   document.body.append(audioElement);
 
-  const mediaStream = await navigator.mediaDevices.getUserMedia({ audio: true });
   const microphoneTrack = mediaStream.getAudioTracks()[0];
   // Prevent ambient sound/VAD from interrupting the assistant's first greeting.
   microphoneTrack.enabled = false;
@@ -355,6 +432,7 @@ async function startOpenAIRealtimeSession(runId) {
   let sessionId = token.sessionId;
   let initialGreetingRequested = false;
   let initialGreetingCompleted = false;
+  let activeAudioResponseId = null;
   const assistantDrafts = new Map();
   const deliveredAssistantItems = new Set();
 
@@ -379,6 +457,7 @@ async function startOpenAIRealtimeSession(runId) {
   };
 
   dataChannel.onmessage = (messageEvent) => {
+    if (closed || runId !== currentRunId) return;
     let event;
     try {
       event = JSON.parse(messageEvent.data);
@@ -407,20 +486,39 @@ async function startOpenAIRealtimeSession(runId) {
 
     if (event.type === "input_audio_buffer.speech_started") {
       elements.modeBadge.textContent = "사용자 말하는 중";
+      dashboard.tracker.cancel("interrupted");
     }
     if (event.type === "input_audio_buffer.speech_stopped") {
       elements.modeBadge.textContent = "응답 대기";
-      noteUserTurn();
+      noteUserTurn("voice", "openai.input_audio_buffer.speech_stopped", { key: event.item_id });
     }
     if (event.type === "conversation.item.input_audio_transcription.completed") {
-      appendMessage("user", event.transcript, { trackTurn: false });
+      appendMessage("user", event.transcript);
     }
     if (event.type === "response.created") {
       elements.modeBadge.textContent = "생성 중";
+      const greeting = event.response?.metadata?.purpose === "initial_greeting"
+        || (initialGreetingRequested && !initialGreetingCompleted && !dashboard.tracker.pending);
+      dashboard.tracker.bindResponse(event.response?.id, { greeting });
+      isAssistantSpeaking = true;
+      updateControls();
     }
-    if (event.type === "response.output_audio.delta") {
+    if (event.type === "output_audio_buffer.started") {
       elements.modeBadge.textContent = "AGENT 말하는 중";
-      noteAssistantStarted();
+      activeAudioResponseId = event.response_id;
+      noteAssistantStarted("openai.output_audio_buffer.started", event.response_id);
+    }
+    if (event.type === "output_audio_buffer.stopped" || event.type === "output_audio_buffer.cleared") {
+      if (!activeAudioResponseId || activeAudioResponseId === event.response_id) {
+        activeAudioResponseId = null;
+        isAssistantSpeaking = false;
+        elements.modeBadge.textContent = "듣는 중";
+        if (initialGreetingRequested && !initialGreetingCompleted) {
+          initialGreetingCompleted = true;
+          microphoneTrack.enabled = !isMuted;
+        }
+        updateControls();
+      }
     }
     if (
       event.type === "response.output_audio_transcript.delta" ||
@@ -437,25 +535,28 @@ async function startOpenAIRealtimeSession(runId) {
       deliverAssistant(event, assistantDrafts.get(key) || "");
     }
     if (event.type === "response.done") {
-      elements.modeBadge.textContent = "듣는 중";
       addTokenUsage(event.response?.usage);
-      if (initialGreetingRequested && !initialGreetingCompleted) {
-        initialGreetingCompleted = true;
-        microphoneTrack.enabled = !isMuted;
-        if (event.response?.status === "failed") {
-          showError(
-            event.response?.status_details?.error?.message ||
-              "OpenAI Realtime 첫 인사 생성에 실패했습니다.",
-          );
+      if (["failed", "cancelled", "incomplete"].includes(event.response?.status)) {
+        dashboard.tracker.cancel("failed", event.response?.id);
+        isAssistantSpeaking = false;
+        elements.modeBadge.textContent = "듣는 중";
+        if (!initialGreetingCompleted) {
+          initialGreetingCompleted = true;
+          microphoneTrack.enabled = !isMuted;
         }
+        if (event.response?.status === "failed") showError(event.response?.status_details?.error?.message || "응답 생성에 실패했습니다.");
+        updateControls();
       }
     }
     if (event.type === "error") {
+      dashboard.tracker.cancel("failed");
+      isAssistantSpeaking = false;
       if (initialGreetingRequested && !initialGreetingCompleted) {
         microphoneTrack.enabled = !isMuted;
       }
       console.error("OpenAI Realtime event error", event);
       showError(event.error?.message || "OpenAI Realtime 오류가 발생했습니다.");
+      updateControls();
     }
   };
 
@@ -517,7 +618,7 @@ async function startOpenAIRealtimeSession(runId) {
     throw error;
   }
 
-  markConnected(sessionId || `${token.model} · ${token.voice}`);
+  if (runId === currentRunId) markConnected(sessionId || `${token.model} · ${token.voice}`);
   return {
     id: sessionId,
     end: async () => cleanup(),
@@ -525,7 +626,6 @@ async function startOpenAIRealtimeSession(runId) {
       microphoneTrack.enabled = !muted;
     },
     sendText: (message) => {
-      appendMessage("user", message);
       sendRealtimeEvent(dataChannel, {
         type: "conversation.item.create",
         item: {
@@ -547,6 +647,7 @@ async function startSelectedMode() {
   isConnecting = true;
   showError("");
   beginMetrics();
+  dashboard.beginSession({ mode: selectedMode, model: modeModel(selectedMode), sessionId: runId });
   setStatus("연결 준비 중…", "connecting");
   elements.modeBadge.textContent = "CONNECTING";
   updateControls();
@@ -563,7 +664,9 @@ async function startSelectedMode() {
     }
     activeSession = session;
     if (!uiConnected) markConnected(session.id);
+    updateControls();
   } catch (error) {
+    if (currentRunId !== runId) return;
     console.error(error);
     showError(error instanceof Error ? error.message : "음성 엔진 연결에 실패했습니다.");
     resetSessionUi("연결 실패");
@@ -621,22 +724,33 @@ elements.mute.addEventListener("click", () => {
 elements.messageForm.addEventListener("submit", (event) => {
   event.preventDefault();
   const message = elements.messageInput.value.trim();
-  if (!activeSession || !message) return;
+  if (!activeSession || !message || elements.send.disabled) return;
   try {
+    noteUserTurn("text", "client.text_send");
     activeSession.sendText(message);
-    elements.messageInput.value = "";
+    appendMessage("user", message);
     elements.messageInput.focus();
   } catch (error) {
+    dashboard.tracker.cancel("failed");
     showError(error instanceof Error ? error.message : "메시지를 보내지 못했습니다.");
   }
+});
+
+document.querySelectorAll("[data-prompt]").forEach((button) => {
+  button.addEventListener("click", () => {
+    elements.messageInput.value = button.dataset.prompt;
+    elements.messageInput.focus();
+  });
 });
 
 elements.clear.addEventListener("click", clearTranscript);
 
 window.addEventListener("beforeunload", () => {
+  dashboard.endSession();
   activeSession?.end();
 });
 
 resetMetrics();
+dashboard.refresh();
 updateControls();
 loadHealth();
