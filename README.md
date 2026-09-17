@@ -157,3 +157,74 @@ Browser ── WebRTC ──> ElevenLabs Agent (ASR + turn + TTS)
 - [OpenAI Realtime client secrets](https://developers.openai.com/api/reference/resources/realtime/subresources/client_secrets/methods/create)
 - [ElevenLabs JavaScript SDK](https://elevenlabs.io/docs/eleven-agents/libraries/java-script)
 - [ElevenLabs Custom LLM](https://elevenlabs.io/docs/eleven-agents/customization/llm/custom-llm)
+
+## 5. ClawOps Trial phone (070, no SIP)
+
+Separate from the browser comparison lab: a small runnable module that uses
+**ClawOpsAgent + OpenAI Realtime** so you can receive (and optionally place)
+real KR 070 calls during a ClawOps Trial. SIP trunks / LiveKit / ngrok are
+**out of scope** for this path — the agent SDK keeps a websocket to ClawOps.
+
+### Trial limits (as of ClawOps Trial docs)
+
+| Item | Limit |
+|---|---|
+| Duration | 3 days |
+| Card | Not required |
+| Numbers | 1 |
+| Concurrent calls | 1 |
+| Outbound | ~10 minutes total |
+| Inbound | Unlimited within the trial |
+
+### Env vars
+
+Documented in [`.env.example`](./.env.example):
+
+```dotenv
+CLAWOPS_API_KEY=
+CLAWOPS_ACCOUNT_ID=
+CLAWOPS_FROM_NUMBER=070xxxxxxxx
+CLAWOPS_TEST_TO_NUMBER=010xxxxxxxx   # optional outbound target
+
+# Reused from the OpenAI Realtime browser lab:
+OPENAI_API_KEY=
+OPENAI_REALTIME_INSTRUCTIONS=...
+OPENAI_REALTIME_VOICE=cedar
+OPENAI_REALTIME_LANGUAGE=ko
+OPENAI_REALTIME_MODEL=gpt-realtime-2
+```
+
+### Install (optional dependency)
+
+```bash
+pip install -r requirements-clawops.txt
+# or: pip install "clawops[agent,openai]"
+# or: pip install ".[clawops]"
+```
+
+The base `requirements.txt` / FastAPI browser lab stays unchanged if you skip this.
+
+### Inbound (call your Trial 070)
+
+```bash
+python -m app.clawops_phone
+# equivalent: python scripts/clawops_trial_phone.py
+```
+
+Leave the process running, then dial `CLAWOPS_FROM_NUMBER` from a mobile phone.
+No public URL or SIP registration is required.
+
+### Outbound test
+
+```bash
+python -m app.clawops_phone --to 01012345678
+# or set CLAWOPS_TEST_TO_NUMBER and:
+python -m app.clawops_phone --outbound-only
+```
+
+Outbound burns the Trial’s short outbound budget — prefer inbound for most demos.
+
+### Scope notes
+
+- Does **not** modify or break the FastAPI browser lab (`uvicorn app.main:app`).
+- Does **not** set up ClawOps SIP endpoints, LiveKit, or BYOC trunks.
