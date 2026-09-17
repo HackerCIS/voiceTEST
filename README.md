@@ -8,6 +8,7 @@
 | OpenAI Realtime | OpenAI Realtime | `gpt-realtime-2.1` |
 | ElevenLabs + OpenAI | ElevenLabs Agent | FastAPI 프록시를 통한 `gpt-5.4` |
 | ClawOps Phone | ClawOps 070 전화 | OpenAI Realtime |
+| LiveKit Phone | ClawOps SIP → LiveKit | 기존 LiveKit Agent 워커 |
 
 화면에는 연결 시간, 평균 응답 지연, 사용자 턴 수와 OpenAI Realtime 토큰 사용량이 표시됩니다.
 브라우저 음성 모드의 턴별 응답 지연은 누적·비교할 수 있습니다. ClawOps 전화 모드는 브라우저 마이크·텍스트 입력과 응답 지연 측정을 지원하지 않습니다.
@@ -322,3 +323,15 @@ Outbound burns the Trial’s short outbound budget — prefer inbound for most d
 
 - Does **not** modify or break the FastAPI browser lab (`uvicorn app.main:app`).
 - Does **not** set up ClawOps SIP endpoints, LiveKit, or BYOC trunks.
+
+
+## 6. LiveKit Phone (mode 05, ClawOps SIP)
+
+기존 LiveKit 상담사(STT–LLM–TTS)를 유지한 채, 전화만 ClawOps SIP 트렁크로 붙입니다.
+
+- 설정 체크리스트: [docs/LIVEKIT_CLAWOPS_SETUP.md](./docs/LIVEKIT_CLAWOPS_SETUP.md)
+- 아키텍처 세션 노트: [docs/livekit-clawops-session.md](./docs/livekit-clawops-session.md)
+- 설치: `pip install -r requirements-livekit.txt`
+- API: `GET /api/livekit-phone/health`, `POST /api/livekit-phone/token`, `POST /api/livekit-phone/outbound`
+
+모드 04(ClawOpsAgent)와 달리 상담 엔진은 LiveKit 워커입니다. 동일 070에서는 라우팅을 SIP로 바꿔야 합니다.

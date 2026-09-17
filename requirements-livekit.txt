@@ -1,0 +1,2 @@
+# Optional LiveKit Phone mode (ClawOps SIP → LiveKit Cloud)
+livekit-api>=1.0,<2

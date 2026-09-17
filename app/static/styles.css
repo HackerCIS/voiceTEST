@@ -34,7 +34,7 @@ h3 { margin: 0; font-size: 12px; }
 .section-heading > p { font-size: 11px; color: var(--subtle); margin: 0; }
 .panel-label { font: 10px var(--mono); color: var(--subtle); letter-spacing: .8px; }
 .mode-section { margin-bottom: 24px; }
-.mode-tabs { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; }
+.mode-tabs { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 12px; }
 .mode-button { --engine-color: var(--purple); display: flex; position: relative; align-items: center; gap: 13px; padding: 21px 17px; min-height: 91px; text-align: left; border: 1px solid var(--line); border-radius: 12px; background: #14171d; }
 [data-mode="openai_realtime"] { --engine-color: var(--mint); }
 [data-mode="hybrid"] { --engine-color: var(--blue); }

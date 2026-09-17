@@ -18,6 +18,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from app.phone_session import PhoneSession, normalize_phone_number
+from app import livekit_phone
 
 load_dotenv()
 
@@ -418,6 +419,7 @@ async def health() -> dict[str, Any]:
                     if not value
                 ],
             },
+            "livekit_phone": livekit_phone.health_payload(),
         },
     }
 
@@ -521,6 +523,65 @@ async def clawops_stop(payload: ClawOpsStopRequest | None = None) -> dict[str, A
                 ) from exc
         _clawops_task = None
         return {"status": "stopped"}
+
+
+
+class LiveKitMonitorTokenRequest(BaseModel):
+    room_name: str | None = Field(default=None, alias="roomName")
+    identity: str | None = None
+
+    model_config = {"populate_by_name": True}
+
+
+class LiveKitOutboundRequest(BaseModel):
+    to_number: str = Field(alias="toNumber")
+    room_name: str | None = Field(default=None, alias="roomName")
+
+    model_config = {"populate_by_name": True}
+
+
+@app.get("/api/livekit-phone/health")
+async def livekit_phone_health() -> dict[str, Any]:
+    return livekit_phone.health_payload()
+
+
+@app.post("/api/livekit-phone/token")
+async def livekit_phone_token(
+    payload: LiveKitMonitorTokenRequest | None = None,
+) -> dict[str, Any]:
+    cfg = livekit_phone.LiveKitPhoneConfig.from_env()
+    room = (payload.room_name if payload else None) or f"{cfg.room_prefix}monitor"
+    try:
+        return livekit_phone.create_monitor_token(
+            room_name=room,
+            identity=payload.identity if payload else None,
+            config=cfg,
+        )
+    except RuntimeError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.post("/api/livekit-phone/outbound")
+async def livekit_phone_outbound(payload: LiveKitOutboundRequest) -> dict[str, Any]:
+    try:
+        return await livekit_phone.create_outbound_sip_participant(
+            to_number=payload.to_number,
+            room_name=payload.room_name,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        logger.exception("LiveKit CreateSIPParticipant failed")
+        raise HTTPException(
+            status_code=502,
+            detail=(
+                f"LiveKit outbound SIP 실패: {exc}. "
+                "CreateSIPParticipant↔ClawOps는 미검증일 수 있습니다. "
+                "플랜B(REST+Stream)를 검토하세요."
+            ),
+        ) from exc
 
 
 @app.post("/api/session")

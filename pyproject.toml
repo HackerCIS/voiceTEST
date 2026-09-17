@@ -1,7 +1,7 @@
 [project]
 name = "voicetest"
 version = "0.2.0"
-description = "Voice model comparison lab (browser) + optional ClawOps Trial phone path"
+description = "Voice model comparison lab + ClawOps Trial phone + LiveKit SIP phone path"
 requires-python = ">=3.11"
 dependencies = [
   "fastapi>=0.116,<1",
@@ -13,6 +13,9 @@ dependencies = [
 [project.optional-dependencies]
 clawops = [
   "clawops[agent,openai]>=0.56,<0.57",
+]
+livekit = [
+  "livekit-api>=1.0,<2",
 ]
 dev = [
   "pytest>=8,<9",
