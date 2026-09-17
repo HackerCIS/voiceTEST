@@ -1,5 +1,6 @@
 import { formatDuration } from "./latency.js?v=20260917-1";
 import { createLatencyDashboard } from "./latency-ui.js?v=20260917-1";
+import { createPhoneSession, normalizePhoneNumber, phoneStatusLabel } from "./phone-client.js?v=20260917-2";
 
 const MODE_INFO = {
   elevenlabs: {
@@ -25,7 +26,7 @@ const MODE_INFO = {
     supportsLatency: false,
     provider: "ClawOps Phone",
     fallbackModel: "gpt-realtime · 070",
-    description: "ClawOps Trial 070으로 실제 전화를 걸고 받습니다. OpenAI Realtime이 상담하고, SIP/LiveKit은 쓰지 않습니다.",
+    description: "내 070 번호로 전화를 받거나 원하는 번호로 전화를 걸어 OpenAI Realtime과 대화하세요.",
   },
 };
 
@@ -50,6 +51,14 @@ const elements = {
   connectMetric: document.querySelector("#connect-metric"),
   turnMetric: document.querySelector("#turn-metric"),
   tokenMetric: document.querySelector("#token-metric"),
+  sessionPanel: document.querySelector(".session-panel"),
+  metricsPanel: document.querySelector(".metrics"),
+  phoneSettings: document.querySelector("#phone-settings"),
+  phoneDirections: [...document.querySelectorAll('[name="phone-direction"]')],
+  phoneDestination: document.querySelector("#phone-destination"),
+  phoneNumber: document.querySelector("#phone-to-number"),
+  phoneFromNumber: document.querySelector("#phone-from-number"),
+  phoneHelp: document.querySelector("#phone-help"),
 };
 
 let selectedMode = "elevenlabs";
@@ -60,6 +69,7 @@ let uiConnected = false;
 let isMuted = false;
 let healthData = null;
 let isAssistantSpeaking = false;
+let phoneDirection = "inbound";
 
 const metrics = {
   startedAt: 0,
@@ -136,7 +146,9 @@ function isModeConfigured(mode = selectedMode) {
 function updateControls() {
   const busy = isConnecting || uiConnected;
   const phoneMode = selectedMode === "clawops";
-  elements.start.disabled = busy || !isModeConfigured();
+  const outbound = phoneDirection === "outbound";
+  elements.start.disabled = busy || !isModeConfigured()
+    || (phoneMode && outbound && !elements.phoneNumber.value.trim());
   elements.stop.disabled = !busy;
   elements.mute.disabled = !uiConnected || phoneMode;
   elements.messageInput.disabled = phoneMode;
@@ -145,8 +157,23 @@ function updateControls() {
   elements.modeButtons.forEach((button) => {
     button.disabled = busy;
   });
+  elements.sessionPanel.classList.toggle("phone-mode", phoneMode);
+  elements.phoneSettings.hidden = !phoneMode;
+  elements.phoneDestination.hidden = !outbound;
+  elements.phoneNumber.disabled = busy;
+  elements.phoneDirections.forEach((input) => {
+    input.disabled = busy;
+    input.checked = input.value === phoneDirection;
+  });
+  elements.phoneFromNumber.textContent = healthData?.modes?.clawops?.fromNumber || "설정 필요";
+  elements.phoneHelp.textContent = outbound
+    ? "전화를 걸면 입력한 번호로 전화가 옵니다. 전화를 받아 AI와 대화해 주세요."
+    : "수신 대기를 시작한 뒤 내 070 번호로 전화해 주세요.";
+  elements.mute.hidden = phoneMode;
+  elements.messageForm.hidden = phoneMode;
+  elements.metricsPanel.hidden = phoneMode;
   if (phoneMode) {
-    elements.start.textContent = "전화 시작";
+    elements.start.textContent = outbound ? "전화 걸기" : "수신 대기 시작";
   } else {
     elements.start.textContent = "대화 시작";
   }
@@ -244,7 +271,9 @@ async function requestJson(url, options = {}) {
   });
   const data = await response.json().catch(() => ({}));
   if (!response.ok) {
-    throw new Error(data.detail || `요청 실패 (HTTP ${response.status})`);
+    const detail = Array.isArray(data.detail)
+      ? data.detail.map((item) => item.msg).join(" · ") : data.detail;
+    throw new Error(detail || `요청 실패 (HTTP ${response.status})`);
   }
   return data;
 }
@@ -655,31 +684,52 @@ async function startOpenAIRealtimeSession(runId) {
 
 
 async function startClawopsSession(runId) {
-  const data = await requestJson("/api/clawops/start", { method: "POST" });
-  const fromNumber = data.fromNumber || "070";
-  const toNumber = data.toNumber || null;
-  clearTranscript();
-  if (data.mode === "outbound") {
-    appendMessage(
-      "agent",
-      `ClawOps가 ${fromNumber}에서 ${toNumber}로 전화를 겁니다. 휴대폰을 받아 주세요.`,
-    );
-  } else {
-    appendMessage(
-      "agent",
-      `수신 대기 중입니다. 휴대폰에서 ${fromNumber} 로 걸어 주세요. (Trial · SIP 없음)`,
-    );
-  }
-  markConnected(data.sessionId || fromNumber);
-  return {
-    id: data.sessionId || fromNumber,
-    end: async () => {
-      try {
-        await requestJson("/api/clawops/stop", { method: "POST" });
-      } catch (error) {
-        console.error(error);
+  const data = await requestJson("/api/clawops/start", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      mode: phoneDirection,
+      toNumber: phoneDirection === "outbound" ? normalizePhoneNumber(elements.phoneNumber.value) : "",
+    }),
+  });
+  return attachPhoneSession(runId, data);
+}
+
+function attachPhoneSession(runId, data) {
+  let previousStatus = null;
+  const session = createPhoneSession(requestJson, data, {
+    onStatus: (status) => {
+      if (runId !== currentRunId) return;
+      const presentation = phoneStatusLabel(status);
+      showError(status.error || "");
+      if (status.status !== previousStatus) {
+        let message = presentation.label;
+        if (status.status === "listening") message += ` · ${status.fromNumber}로 전화해 주세요.`;
+        if (["connecting", "queued"].includes(status.status) && status.toNumber) {
+          message += ` · ${status.fromNumber} → ${status.toNumber}`;
+        }
+        appendMessage("agent", message);
+        previousStatus = status.status;
       }
+      if (!status.active) {
+        handleUnexpectedDisconnect(runId, presentation.label);
+        return;
+      }
+      uiConnected = true;
+      isConnecting = false;
+      elements.sessionId.textContent = status.callId || status.fromNumber;
+      elements.modeBadge.textContent = presentation.badge;
+      setStatus(presentation.label, presentation.state);
+      updateControls();
     },
+    onError: () => {
+      if (runId === currentRunId) showError("전화 상태를 확인하지 못했습니다. 연결을 확인해 주세요. 종료 버튼으로 다시 종료할 수 있습니다.");
+    },
+  });
+  if (runId === currentRunId) clearTranscript();
+  session.start();
+  return {
+    ...session,
     setMuted: () => {},
     sendText: () => {
       throw new Error("전화 모드에서는 텍스트 입력을 지원하지 않습니다.");
@@ -689,6 +739,16 @@ async function startClawopsSession(runId) {
 
 async function startSelectedMode() {
   if (activeSession || isConnecting || !isModeConfigured()) return;
+
+  if (selectedMode === "clawops" && phoneDirection === "outbound") {
+    try {
+      normalizePhoneNumber(elements.phoneNumber.value);
+    } catch (error) {
+      showError(error.message);
+      elements.phoneNumber.focus();
+      return;
+    }
+  }
 
   const runId = crypto.randomUUID();
   currentRunId = runId;
@@ -726,6 +786,7 @@ async function startSelectedMode() {
 async function stopSession() {
   if (!activeSession && !isConnecting) return;
   const session = activeSession;
+  const runId = currentRunId;
   currentRunId = null;
   activeSession = null;
   elements.stop.disabled = true;
@@ -734,10 +795,18 @@ async function stopSession() {
     await session?.end();
   } catch (error) {
     console.error(error);
-    showError("세션을 정상적으로 종료하지 못했습니다.");
-  } finally {
-    resetSessionUi();
+    showError(error.message || "세션을 정상적으로 종료하지 못했습니다.");
+    if (selectedMode === "clawops" && session) {
+      activeSession = session;
+      currentRunId = runId;
+      uiConnected = true;
+      isConnecting = false;
+      setStatus("종료 실패 · 다시 종료해 주세요", "connected");
+      updateControls();
+      return;
+    }
   }
+  resetSessionUi();
 }
 
 async function loadHealth() {
@@ -755,6 +824,21 @@ async function loadHealth() {
     showError("서버 설정 상태를 확인하지 못했습니다.");
     updateControls();
   }
+  // A reload must leave an existing phone call visible and stoppable.
+  try {
+    const data = await requestJson("/api/clawops/status");
+    if (data.active && !activeSession && !isConnecting && !uiConnected) {
+      selectMode("clawops");
+      phoneDirection = data.mode;
+      elements.phoneNumber.value = data.toNumber || "";
+      const runId = crypto.randomUUID();
+      currentRunId = runId;
+      dashboard.beginSession({ mode: "clawops", model: modeModel("clawops"), sessionId: runId });
+      activeSession = attachPhoneSession(runId, data);
+    }
+  } catch (error) {
+    console.error(error);
+  }
 }
 
 elements.modeButtons.forEach((button) => {
@@ -763,6 +847,25 @@ elements.modeButtons.forEach((button) => {
 
 elements.start.addEventListener("click", startSelectedMode);
 elements.stop.addEventListener("click", stopSession);
+
+elements.phoneDirections.forEach((input) => {
+  input.addEventListener("change", () => {
+    phoneDirection = input.value;
+    showError("");
+    updateControls();
+    if (phoneDirection === "outbound") elements.phoneNumber.focus();
+  });
+});
+elements.phoneNumber.addEventListener("input", () => {
+  showError("");
+  updateControls();
+});
+elements.phoneNumber.addEventListener("keydown", (event) => {
+  if (event.key === "Enter" && !elements.start.disabled) {
+    event.preventDefault();
+    startSelectedMode();
+  }
+});
 
 elements.mute.addEventListener("click", () => {
   if (!activeSession) return;
@@ -797,7 +900,8 @@ elements.clear.addEventListener("click", clearTranscript);
 
 window.addEventListener("beforeunload", () => {
   dashboard.endSession();
-  activeSession?.end();
+  // Phone calls live on the server; a refreshed page reconnects to their status.
+  if (selectedMode !== "clawops") activeSession?.end();
 });
 
 resetMetrics();

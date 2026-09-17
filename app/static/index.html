@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta name="color-scheme" content="dark" />
     <title>Voice Lab · 응답 레이턴시 비교</title>
-    <link rel="stylesheet" href="/static/styles.css?v=20260917-1" />
+    <link rel="stylesheet" href="/static/styles.css?v=20260917-2" />
   </head>
   <body>
     <main class="shell">
@@ -24,7 +24,7 @@
           <button class="mode-button active" data-mode="elevenlabs" aria-pressed="true" type="button"><span class="mode-number">01</span><span class="mode-name"><strong>ElevenLabs</strong><small>음성 인식부터 답변까지</small></span><span class="config-state">확인 중</span></button>
           <button class="mode-button" data-mode="openai_realtime" aria-pressed="false" type="button"><span class="mode-number">02</span><span class="mode-name"><strong>OpenAI Realtime</strong><small>음성으로 듣고, 음성으로 응답</small></span><span class="config-state">확인 중</span></button>
           <button class="mode-button" data-mode="hybrid" aria-pressed="false" type="button"><span class="mode-number">03</span><span class="mode-name"><strong>ElevenLabs + OpenAI</strong><small>ElevenLabs 음성 + OpenAI LLM</small></span><span class="config-state">확인 중</span></button>
-          <button class="mode-button" data-mode="clawops" aria-pressed="false" type="button"><span class="mode-number">04</span><span class="mode-name"><strong>ClawOps Phone</strong><small>070 전화 + OpenAI Realtime</small></span><span class="config-state">확인 중</span></button>
+          <button class="mode-button" data-mode="clawops" aria-pressed="false" type="button"><span class="mode-number">04</span><span class="mode-name"><strong>ClawOps Phone</strong><small>수신 대기 · 발신 전화</small></span><span class="config-state">확인 중</span></button>
         </div>
       </section>
 
@@ -32,6 +32,19 @@
         <section class="session-panel panel" aria-labelledby="session-title">
           <div class="section-heading"><h2 id="session-title">02 <span>대화 테스트</span></h2><span class="panel-label">LIVE SESSION</span></div>
           <div class="mode-summary"><span id="provider-label">ElevenLabs Agent</span><strong id="model-label">Agent 설정 모델</strong><p id="mode-description">ElevenLabs가 음성 인식, LLM, 음성 합성과 턴 제어를 모두 담당합니다.</p></div>
+          <fieldset id="phone-settings" class="phone-settings" hidden>
+            <legend>전화 방식</legend>
+            <div class="phone-direction">
+              <label><input type="radio" name="phone-direction" value="inbound" checked /><span>수신 대기</span></label>
+              <label><input type="radio" name="phone-direction" value="outbound" /><span>발신 전화</span></label>
+            </div>
+            <p class="phone-from">내 전화번호 <strong id="phone-from-number">설정 확인 중</strong></p>
+            <div id="phone-destination" hidden>
+              <label for="phone-to-number">받는 분 전화번호</label>
+              <input id="phone-to-number" type="tel" inputmode="tel" autocomplete="off" maxlength="40" placeholder="010-1234-5678" aria-describedby="phone-help" />
+            </div>
+            <p id="phone-help" class="form-hint">수신 대기를 시작한 뒤 내 070 번호로 전화해 주세요.</p>
+          </fieldset>
           <div class="status-panel" aria-live="polite"><span id="status-dot" class="status-dot" data-state="idle"></span><div class="connection-info"><strong id="status-text">연결 대기</strong><span id="session-id">세션 없음</span></div><span id="mode-badge" class="mode-badge">IDLE</span></div>
           <div class="controls"><button id="start-button" class="primary" type="button"><span aria-hidden="true">◉</span> 대화 시작</button><button id="mute-button" type="button" disabled>마이크 끄기</button><button id="stop-button" class="danger" type="button" disabled>종료</button></div>
           <p id="error-message" class="error" role="alert" hidden></p>
@@ -77,6 +90,6 @@
       </div></details>
       <footer><span>VOICE LAB <span class="footer-divider">/</span> 직접 측정하는 음성 경험</span><span>음성과 대화는 선택한 엔진의 서비스로 전송됩니다.</span></footer>
     </main>
-    <script type="module" src="/static/app.js?v=20260917-1"></script>
+    <script type="module" src="/static/app.js?v=20260917-2"></script>
   </body>
 </html>

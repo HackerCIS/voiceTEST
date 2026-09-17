@@ -55,6 +55,23 @@ h3 { margin: 0; font-size: 12px; }
 .mode-summary > span { display: block; font-size: 11px; color: var(--muted); }
 .mode-summary > strong { display: block; font: 500 17px var(--mono); margin-top: 8px; overflow-wrap: anywhere; }
 .mode-summary p { font-size: 12px; color: var(--muted); line-height: 1.75; margin: 10px 0 0; }
+.phone-settings { min-width: 0; margin: 19px 0 0; padding: 0; border: 0; }
+.phone-settings legend { padding: 0; margin-bottom: 10px; font-size: 12px; font-weight: 600; }
+.phone-direction { display: grid; grid-template-columns: 1fr 1fr; gap: 5px; padding: 4px; border: 1px solid #49402c; border-radius: 8px; background: #111318; }
+.phone-direction label { position: relative; cursor: pointer; }
+.phone-direction input { position: absolute; opacity: 0; width: 1px; height: 1px; }
+.phone-direction span { display: block; padding: 10px 6px; border-radius: 5px; text-align: center; color: var(--muted); font-size: 12px; }
+.phone-direction input:checked + span { background: #3c3321; color: #f0cd86; }
+.phone-direction input:focus-visible + span { outline: 2px solid #e9c174; outline-offset: 2px; }
+.phone-direction input:disabled + span { cursor: default; opacity: .65; }
+.phone-from { display: flex; justify-content: space-between; gap: 10px; margin: 13px 0; color: var(--muted); font-size: 11px; }
+.phone-from strong { color: #e9c174; font: 12px var(--mono); }
+#phone-destination label { display: block; margin-bottom: 8px; font-size: 12px; }
+#phone-to-number { box-sizing: border-box; width: 100%; padding: 12px; border: 1px solid #49402c; border-radius: 7px; background: #0f1218; color: #e9ecf1; font: 15px var(--mono); }
+#phone-to-number:focus { outline: 2px solid #e9c174; outline-offset: 2px; }
+#phone-help { min-height: 32px; }
+.phone-mode .controls { grid-template-columns: 1fr 1fr; }
+.phone-mode .controls .primary { background: #e9c174; border-color: #e9c174; color: #211a0d; }
 .status-panel { display: flex; align-items: center; gap: 10px; padding: 18px 0; }
 .status-dot { width: 7px; height: 7px; flex-shrink: 0; border-radius: 50%; background: #6b7583; box-shadow: 0 0 0 4px #6b758318; }
 .status-dot[data-state="connecting"] { background: #e9c174; animation: pulse 1.2s infinite; }
@@ -202,6 +219,7 @@ footer { display: flex; align-items: center; justify-content: space-between; gap
   .saved-indicator { display: none; }
   .workspace-grid { grid-template-columns: 1fr; }
   .session-panel { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); column-gap: 24px; }
+  .session-panel.phone-mode { display: block; }
   .session-panel > .section-heading, .session-panel > .mode-summary, .session-panel > .error { grid-column: 1 / -1; }
   .session-panel > .status-panel, .session-panel > .controls, .session-panel > .metrics, .session-panel > .message-form { grid-column: 1; }
   .transcript-section { grid-column: 2; grid-row: 3 / span 4; }

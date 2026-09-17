@@ -107,6 +107,13 @@ pip install -r requirements.txt
 uvicorn app.main:app --reload
 ```
 
+**ClawOps Phone**도 사용하려면 같은 가상환경에서 전화용 패키지를 추가로 설치합니다.
+
+```bash
+.venv/bin/python -m pip install -r requirements-clawops.txt
+.venv/bin/python -m uvicorn app.main:app --reload
+```
+
 <http://127.0.0.1:8000>을 열고 모드 버튼을 선택한 뒤 `대화 시작`을 누릅니다.
 
 설정 상태 확인:
@@ -120,7 +127,7 @@ curl http://127.0.0.1:8000/api/health
 ```bash
 pip install -r requirements-dev.txt
 pytest -q
-node --test tests/latency.test.mjs
+node --test tests/*.test.mjs
 ```
 
 ## 4. 응답 레이턴시 비교 화면
@@ -209,7 +216,7 @@ Documented in [`.env.example`](./.env.example):
 CLAWOPS_API_KEY=
 CLAWOPS_ACCOUNT_ID=
 CLAWOPS_FROM_NUMBER=070xxxxxxxx
-CLAWOPS_TEST_TO_NUMBER=010xxxxxxxx   # optional outbound target
+CLAWOPS_TEST_TO_NUMBER=010xxxxxxxx   # optional standalone CLI outbound target
 
 # Reused from the OpenAI Realtime browser lab:
 OPENAI_API_KEY=
@@ -222,14 +229,76 @@ OPENAI_REALTIME_MODEL=gpt-realtime-2
 ### Install (optional dependency)
 
 ```bash
-pip install -r requirements-clawops.txt
-# or: pip install "clawops[agent,openai]"
-# or: pip install ".[clawops]"
+.venv/bin/python -m pip install -r requirements-clawops.txt
+# or: .venv/bin/python -m pip install ".[clawops]"
 ```
 
+Install into the same virtual environment that runs Uvicorn, then restart the server.
+With uv, use `uv sync --extra clawops` and `uv run --extra clawops uvicorn app.main:app --reload`.
+The [official SDK](https://pypi.org/project/clawops/) requires the `agent` and `openai` extras for this mode.
 The base `requirements.txt` / FastAPI browser lab stays unchanged if you skip this.
 
-### Inbound (call your Trial 070)
+If you see `ModuleNotFoundError: No module named 'clawops'`, the server's Python
+environment is missing these dependencies. The phone start endpoint returns an
+installation command using that Python executable; the browser lab keeps running.
+
+### 웹에서 수신 / 발신 선택
+
+1. **04 ClawOps Phone**을 선택합니다.
+2. **수신 대기**에서는 **수신 대기 시작**을 누르고 화면의 070 번호로 전화합니다.
+3. **발신 전화**에서는 받는 분의 번호를 입력하고 **전화 걸기**를 누릅니다. `010-1234-5678` 또는 `+82 10-1234-5678` 형식을 사용할 수 있습니다.
+4. 화면에서 발신 중, 통화 중, 응답 없음, 통화 종료 상태를 확인합니다. **종료**는 벨이 울리는 중에도 발신을 취소합니다.
+
+웹페이지를 새로고침하면 실행 중인 전화 세션을 다시 표시합니다. 한 번에 한 세션만 실행하며,
+수신 대기를 종료한 뒤 발신 메뉴로 전환할 수 있습니다. 번호는 브라우저 저장소에 보관하지 않습니다.
+`CLAWOPS_TEST_TO_NUMBER`는 CLI의 기본 발신 번호이며, 웹에서는 메뉴와 입력한 번호로 명시적으로 발신합니다.
+수신과 발신 모두 `OPENAI_API_KEY`, `OPENAI_REALTIME_MODEL`, `OPENAI_REALTIME_INSTRUCTIONS`를 공유합니다.
+
+전화 시작 API는 `POST /api/clawops/start`에 `{"mode":"outbound","toNumber":"01012345678"}`를 받습니다.
+요청 본문을 생략하거나 `{"mode":"inbound"}`를 보내면 수신 대기합니다.
+`GET /api/clawops/status`로 현재 세션을 확인하고, `POST /api/clawops/stop`에
+`{"sessionId":"시작 응답의 sessionId"}`를 보내 해당 세션을 종료합니다.
+
+구현은 [ClawOps 시작하기의 아웃바운드 예제](https://platform.claw-ops.com/docs/getting-started)와
+[Python SDK 통화 제어](https://platform.claw-ops.com/docs/sdk/python)를 따릅니다.
+발신에는 `agent.call()`을, 벨이 울리는 중의 취소까지 처리하기 위해 종료에는 `calls.update(status="completed")`를 사용합니다.
+
+### 발신 응답 속도와 끊김 확인
+
+발신은 `CLAWOPS_OUTBOUND_VAD_EAGERNESS=high`를 기본으로 사용합니다. SDK 기본값인
+`low`보다 발화가 끝났는지 기다리는 최대 시간이 짧습니다. 상대가 생각하면서 길게 쉬는
+대화에서 AI가 너무 빨리 끼어들면 `.env`에 `CLAWOPS_OUTBOUND_VAD_EAGERNESS=auto`를
+설정하고 서버를 재시작하세요. `low`, `medium`, `high`, `auto`를 지원하며 수신은 기존
+`low`를 유지합니다. 이는 말끝 감지 설정이며 음성 재생 속도나 모델 자체의 생성 시간을
+보장하는 설정은 아닙니다. [OpenAI VAD 설명](https://developers.openai.com/api/docs/guides/realtime-vad)
+
+벨이 울릴 때 OpenAI 연결과 첫 인사를 준비하는 prewarm은 유지합니다. 실제 OpenAI로
+전화망을 제외한 경로를 측정했을 때, 미리 생성된 인사는 attach 즉시 전송됐습니다.
+앱의 `PhoneOpenAIRealtime`은 끼어들기로 취소한 이전 응답의 늦은 오디오를 버리고,
+새 응답이 이전 재생 상태를 물려받지 않게 합니다. 종료 시 WebSocket 중복 close와
+HTTP 클라이언트 누수도 방지합니다. SDK 내부 훅을 사용하므로 ClawOps 버전 범위를
+`>=0.56,<0.57`로 제한하고 실제 SDK를 사용하는 회귀 테스트를 둡니다.
+
+Uvicorn 로그의 `[PHONE-RT]`에는 다음 수치만 기록하며 음성·대화 내용은 저장하지 않습니다.
+
+| 항목 | 의미 |
+|---|---|
+| `openai_ready.elapsedMs` | OpenAI 연결과 세션 설정에 걸린 시간 |
+| `first_audio.speechStopToAudioMs` | 말끝 감지 이벤트 수신부터 첫 응답 오디오 수신까지의 시간; 첫 인사는 null |
+| `response_done.maxDeltaGapMs` | 해당 응답의 OpenAI 오디오 도착 간격 최댓값 |
+| `response_done.maxInputGapMs` | 통화 전체에서 ClawOps 입력 오디오 도착 간격 최댓값 |
+| `response_done.maxInputSendMs` | 입력 오디오를 OpenAI에 보내는 데 걸린 시간 최댓값 |
+| `interruptions` / `droppedAudioChunks` | 생성·재생 중 끼어들기로 추정한 횟수 / 취소 후 늦게 도착해 버린 오디오 이벤트 수 |
+
+이 수치는 서버에서 관측한 값입니다. `speechStopToAudioMs`에는 말끝을 감지하기 전의
+대기와 전화기까지의 재생 지연이 포함되지 않습니다. 오디오가 미리 버퍼링될 수 있으므로
+`maxDeltaGapMs`만으로 실제 끊김을 판정해서는 안 됩니다. 수신·발신 통화에서 같은 문장을
+말하며 비교하면 모델 응답 지연, 입력 네트워크 지연, 잦은 끼어들기를 구분하는 데 도움이 됩니다.
+
+자동 검증: `python -m pytest -q` 및 `node --test tests/*.test.mjs`.
+회귀 테스트는 전화망에 접속하거나 실제 전화번호로 발신하지 않습니다.
+
+### CLI inbound (call your Trial 070)
 
 ```bash
 python -m app.clawops_phone
@@ -239,7 +308,7 @@ python -m app.clawops_phone
 Leave the process running, then dial `CLAWOPS_FROM_NUMBER` from a mobile phone.
 No public URL or SIP registration is required.
 
-### Outbound test
+### CLI outbound test
 
 ```bash
 python -m app.clawops_phone --to 01012345678

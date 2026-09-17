@@ -3,7 +3,7 @@
 Inbound: ``python -m app.clawops_phone`` then dial the Trial 070 number.
 Outbound: ``python -m app.clawops_phone --to 010...`` or set CLAWOPS_TEST_TO_NUMBER.
 
-This module is independent of the FastAPI browser lab in ``app.main``.
+Agent construction is shared with the FastAPI browser lab in ``app.main``.
 """
 
 from __future__ import annotations
@@ -12,6 +12,7 @@ import argparse
 import asyncio
 import logging
 import os
+import shlex
 import sys
 from pathlib import Path
 
@@ -37,10 +38,14 @@ DEFAULT_REALTIME_INSTRUCTIONS = """어르신들에게 따뜻한 안부 인사 �
 - 건강, 식사, 생활 편의 등에 대해 간단히 안부를 묻고, 대화 흐름을 자연스럽게 이어가세요."""
 
 
+class ClawOpsConfigurationError(RuntimeError):
+    """A phone setup error that callers can report without exiting the server."""
+
+
 def _require_env(name: str) -> str:
     value = os.getenv(name, "").strip()
     if not value:
-        raise SystemExit(f"Missing required env var: {name}")
+        raise ClawOpsConfigurationError(f"Missing required env var: {name}")
     return value
 
 
@@ -48,42 +53,68 @@ def _optional_env(name: str, default: str = "") -> str:
     return os.getenv(name, default).strip() or default
 
 
-def build_agent():
+def _build_realtime(**kwargs):
+    # Keep the optional SDK import lazy so the browser-only lab still starts.
+    from app.clawops_realtime import PhoneOpenAIRealtime
+
+    return PhoneOpenAIRealtime(**kwargs)
+
+
+def build_agent(*, mode: str = "inbound"):
     """Construct ClawOpsAgent + OpenAIRealtime from environment."""
     try:
-        from clawops.agent import ClawOpsAgent, OpenAIRealtime
+        from clawops.agent import ClawOpsAgent
+
+        from_number = _require_env("CLAWOPS_FROM_NUMBER")
+        # CLAWOPS_API_KEY / CLAWOPS_ACCOUNT_ID are read by the SDK from the environment.
+        _require_env("CLAWOPS_API_KEY")
+        _require_env("CLAWOPS_ACCOUNT_ID")
+        _require_env("OPENAI_API_KEY")
+
+        instructions = _optional_env(
+            "OPENAI_REALTIME_INSTRUCTIONS",
+            DEFAULT_REALTIME_INSTRUCTIONS,
+        )
+        voice = _optional_env("OPENAI_REALTIME_VOICE", "cedar")
+        language = _optional_env("OPENAI_REALTIME_LANGUAGE", "ko")
+        model = _optional_env("OPENAI_REALTIME_MODEL", "gpt-realtime-2.1")
+
+        eagerness = "low"
+        if mode == "outbound":
+            eagerness = _optional_env("CLAWOPS_OUTBOUND_VAD_EAGERNESS", "high").lower()
+            if eagerness not in {"low", "medium", "high", "auto"}:
+                raise ClawOpsConfigurationError(
+                    "CLAWOPS_OUTBOUND_VAD_EAGERNESS는 low, medium, high, auto 중 하나여야 합니다."
+                )
+
+        session = _build_realtime(
+            system_prompt=instructions,
+            voice=voice,
+            language=language,
+            model=model,
+            turn_detection={
+                "type": "semantic_vad",
+                "eagerness": eagerness,
+                "create_response": True,
+                "interrupt_response": True,
+            },
+        )
+        agent = ClawOpsAgent(
+            from_=from_number,
+            session=session,
+            prewarm_enabled=True,
+        )
+        return agent, from_number
     except ImportError as exc:
-        raise SystemExit(
-            'ClawOps agent extras are not installed. Run:\n'
-            '  pip install "clawops[agent,openai]"\n'
-            "or: pip install -r requirements-clawops.txt"
+        # OpenAIRealtime also checks its optional dependencies in its constructor.
+        command = shlex.join([
+            sys.executable, "-m", "pip", "install", "-r",
+            str(_REPO_ROOT / "requirements-clawops.txt"),
+        ])
+        raise ClawOpsConfigurationError(
+            "ClawOps 전화용 패키지가 설치되지 않았거나 불완전합니다. "
+            f"서버와 같은 Python 환경에 설치한 뒤 다시 시작해 주세요:\n{command}"
         ) from exc
-
-    from_number = _require_env("CLAWOPS_FROM_NUMBER")
-    # CLAWOPS_API_KEY / CLAWOPS_ACCOUNT_ID are read by the SDK from the environment.
-    _require_env("CLAWOPS_API_KEY")
-    _require_env("CLAWOPS_ACCOUNT_ID")
-    _require_env("OPENAI_API_KEY")
-
-    instructions = _optional_env(
-        "OPENAI_REALTIME_INSTRUCTIONS",
-        DEFAULT_REALTIME_INSTRUCTIONS,
-    )
-    voice = _optional_env("OPENAI_REALTIME_VOICE", "cedar")
-    language = _optional_env("OPENAI_REALTIME_LANGUAGE", "ko")
-    model = _optional_env("OPENAI_REALTIME_MODEL", "gpt-realtime-2.1")
-
-    session = OpenAIRealtime(
-        system_prompt=instructions,
-        voice=voice,
-        language=language,
-        model=model,
-    )
-    agent = ClawOpsAgent(
-        from_=from_number,
-        session=session,
-    )
-    return agent, from_number
 
 
 async def serve_inbound() -> None:
@@ -97,12 +128,15 @@ async def serve_inbound() -> None:
 
 
 async def place_outbound(to_number: str) -> None:
-    agent, from_number = build_agent()
+    agent, from_number = build_agent(mode="outbound")
     logger.info("ClawOps outbound: %s -> %s", from_number, to_number)
-    call = await agent.call(to_number)
-    logger.info("Outbound call queued; waiting until hangup...")
-    await call.wait()
-    logger.info("Outbound call finished.")
+    try:
+        call = await agent.call(to_number)
+        logger.info("Outbound call queued; waiting until hangup...")
+        await call.wait()
+        logger.info("Outbound call finished.")
+    finally:
+        await agent.disconnect()
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -139,16 +173,20 @@ def main(argv: list[str] | None = None) -> None:
 
     to_number = (args.to_number or os.getenv("CLAWOPS_TEST_TO_NUMBER", "")).strip()
 
-    if args.outbound_only or to_number:
-        if not to_number:
-            raise SystemExit(
-                "Outbound requested but no number given. "
-                "Pass --to or set CLAWOPS_TEST_TO_NUMBER."
-            )
-        asyncio.run(place_outbound(to_number))
-        return
+    try:
+        if args.outbound_only or to_number:
+            if not to_number:
+                raise ClawOpsConfigurationError(
+                    "Outbound requested but no number given. "
+                    "Pass --to or set CLAWOPS_TEST_TO_NUMBER."
+                )
+            asyncio.run(place_outbound(to_number))
+            return
 
-    asyncio.run(serve_inbound())
+        asyncio.run(serve_inbound())
+    except ClawOpsConfigurationError as exc:
+        # Only the standalone CLI owns the process exit status.
+        raise SystemExit(str(exc)) from None
 
 
 if __name__ == "__main__":
