@@ -48,3 +48,14 @@
 - 아웃바운드 PoC: `POST /api/livekit-phone/outbound` → CreateSIPParticipant
 
 세션 배경: [livekit-clawops-session.md](./livekit-clawops-session.md)
+
+## Mode 05 아웃바운드 (대화까지)
+
+앱의 `POST /api/livekit-phone/outbound`는 다음 순서로 동작합니다.
+
+1. `LIVEKIT_AGENT_NAME` 에이전트를 room에 **Agent Dispatch**
+2. 같은 room으로 **CreateSIPParticipant** (ClawOps Outbound trunk, TLS)
+
+필수 env: `LIVEKIT_URL`, `LIVEKIT_API_KEY`, `LIVEKIT_API_SECRET`, `LIVEKIT_OUTBOUND_TRUNK_ID`, `LIVEKIT_AGENT_NAME`, `CLAWOPS_FROM_NUMBER`  
+앱 밖에서 Agent 워커(`python agent.py dev`)가 떠 있어야 대화됩니다.  
+번호는 `070…` / `010…` (또는 `+82…`). `+070` / `+010` 금지. trunk Signaling은 **TLS**.

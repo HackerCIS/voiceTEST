@@ -811,7 +811,9 @@ async function startLivekitSession(runId) {
     });
     appendMessage(
       "agent",
-      `LiveKit SIP 발신 PoC: ${data.fromNumber || "070"} → ${data.toNumber} (room ${data.roomName}). ${data.note || ""}`,
+      `LiveKit SIP 발신: ${data.fromNumber || "070"} → ${data.toNumber} (room ${data.roomName}` +
+        (data.agentName ? `, agent ${data.agentName}` : "") +
+        `). ${data.note || "워커가 떠 있어야 대화됩니다."}`,
       { trackTurn: false },
     );
     markConnected(data.sipCallId || data.roomName || runId);

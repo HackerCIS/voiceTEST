@@ -13,3 +13,21 @@ def test_checklist_marks_missing_credentials(monkeypatch):
     cfg = LiveKitPhoneConfig.from_env()
     items = {item["id"]: item for item in checklist(cfg)}
     assert items["livekit_credentials"]["done"] is False
+
+
+import asyncio
+import pytest
+
+
+def test_outbound_requires_agent_name(monkeypatch):
+    monkeypatch.setenv("LIVEKIT_URL", "wss://example.livekit.cloud")
+    monkeypatch.setenv("LIVEKIT_API_KEY", "key")
+    monkeypatch.setenv("LIVEKIT_API_SECRET", "secret")
+    monkeypatch.setenv("LIVEKIT_OUTBOUND_TRUNK_ID", "ST_test")
+    monkeypatch.delenv("LIVEKIT_AGENT_NAME", raising=False)
+    from app import livekit_phone
+
+    with pytest.raises(RuntimeError, match="LIVEKIT_AGENT_NAME"):
+        asyncio.run(
+            livekit_phone.create_outbound_sip_participant(to_number="01012345678")
+        )
