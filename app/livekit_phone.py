@@ -150,9 +150,17 @@ def checklist(config: LiveKitPhoneConfig | None = None) -> list[dict[str, Any]]:
         },
         {
             "id": "outbound_trunk",
-            "label": "Outbound trunk (CreateSIPParticipant PoC, 선택)",
+            "label": "Outbound trunk TLS (CreateSIPParticipant)",
             "done": bool(cfg.outbound_trunk_id),
+            "detail": cfg.outbound_trunk_id or None,
             "owner": "livekit-console",
+        },
+        {
+            "id": "outbound_agent",
+            "label": "LIVEKIT_AGENT_NAME + 워커 기동 (아웃바운드 대화)",
+            "done": bool(cfg.agent_name),
+            "detail": cfg.agent_name or None,
+            "owner": "env+ops",
         },
     ]
 
@@ -203,40 +211,83 @@ async def create_outbound_sip_participant(
     config: LiveKitPhoneConfig | None = None,
     room_name: str | None = None,
 ) -> dict[str, Any]:
+    """Place an outbound SIP call and dispatch the counseling agent into the same room.
+
+    CreateSIPParticipant alone only puts the phone into a room. Without Agent
+    Dispatch, the callee hears silence. Order: dispatch worker first, then dial.
+    """
     cfg = config or LiveKitPhoneConfig.from_env()
     if not cfg.credentials_ready:
         raise RuntimeError("LIVEKIT_URL / LIVEKIT_API_KEY / LIVEKIT_API_SECRET 필요")
     if not cfg.outbound_trunk_id:
         raise RuntimeError(
-            "LIVEKIT_OUTBOUND_TRUNK_ID 없음. ClawOps digest outbound trunk를 "
-            "LiveKit에 만든 뒤 설정하세요. (CreateSIPParticipant↔ClawOps는 미검증)"
+            "LIVEKIT_OUTBOUND_TRUNK_ID 없음. LiveKit Outbound trunk(TLS) ID를 "
+            "설정하세요."
+        )
+    if not cfg.agent_name:
+        raise RuntimeError(
+            "LIVEKIT_AGENT_NAME 없음. 대화하려면 에이전트 이름"
+            "(예: phone-test-openai)을 넣고, 해당 LiveKit Agent 워커를 기동하세요."
         )
 
     try:
         from livekit import api
     except ImportError as exc:
         raise RuntimeError(
-            'livekit-api 미설치. pip install -r requirements-livekit.txt'
+            "livekit-api 미설치. pip install -r requirements-livekit.txt"
         ) from exc
 
     to_number = normalize_kr_phone(to_number)
-    from_number = normalize_kr_phone(cfg.clawops_from_number) if cfg.clawops_from_number else ""
+    from_number = (
+        normalize_kr_phone(cfg.clawops_from_number) if cfg.clawops_from_number else ""
+    )
     room = room_name or f"{cfg.room_prefix}{uuid.uuid4().hex[:10]}"
+    identity = to_number
 
     lk = api.LiveKitAPI(cfg.url, cfg.api_key, cfg.api_secret)
+    dispatch_id = None
     try:
-        request = api.CreateSIPParticipantRequest(
-            sip_trunk_id=cfg.outbound_trunk_id,
-            sip_call_to=to_number,
-            room_name=room,
-            participant_identity=f"sip-out-{to_number}",
-            participant_name="ClawOps outbound",
-            wait_until_answered=False,
+        # 1) Agent joins the room and waits for the SIP participant (inbound path).
+        dispatch = await lk.agent_dispatch.create_dispatch(
+            api.CreateAgentDispatchRequest(
+                agent_name=cfg.agent_name,
+                room=room,
+                metadata="{}",
+            )
         )
+        dispatch_id = getattr(dispatch, "id", None) or getattr(
+            dispatch, "dispatch_id", None
+        )
+        logger.info(
+            "dispatched agent %s to room %s (dispatch=%s)",
+            cfg.agent_name,
+            room,
+            dispatch_id,
+        )
+
+        # 2) Dial callee into the same room via ClawOps outbound trunk.
+        request_kwargs: dict[str, Any] = {
+            "sip_trunk_id": cfg.outbound_trunk_id,
+            "sip_call_to": to_number,
+            "room_name": room,
+            "participant_identity": identity,
+            "participant_name": "Callee",
+            "wait_until_answered": False,
+            "play_dialtone": True,
+        }
         if from_number:
-            # Some SDK versions accept sip_number / from fields; set if present.
-            if hasattr(request, "sip_number"):
+            request_kwargs["sip_number"] = from_number
+        try:
+            request = api.CreateSIPParticipantRequest(**request_kwargs)
+        except TypeError:
+            # Older SDKs may not accept play_dialtone / sip_number in ctor.
+            request_kwargs.pop("play_dialtone", None)
+            request = api.CreateSIPParticipantRequest(**{
+                k: v for k, v in request_kwargs.items() if k != "sip_number"
+            })
+            if from_number and hasattr(request, "sip_number"):
                 request.sip_number = from_number
+
         result = await lk.sip.create_sip_participant(request)
     finally:
         await lk.aclose()
@@ -251,11 +302,14 @@ async def create_outbound_sip_participant(
         "toNumber": to_number,
         "fromNumber": from_number or None,
         "trunkId": cfg.outbound_trunk_id,
-        "participantId": participant_id,
+        "agentName": cfg.agent_name,
+        "dispatchId": dispatch_id,
+        "participantId": participant_id or identity,
         "sipCallId": sip_call_id,
         "note": (
-            "CreateSIPParticipant → ClawOps는 메일상 미검증입니다. "
-            "실패 시 플랜B(REST 발신 + Stream)를 검토하세요."
+            f"에이전트 `{cfg.agent_name}`를 room에 dispatch한 뒤 SIP 발신했습니다. "
+            "워커(python agent.py dev)가 떠 있어야 대화가 됩니다. "
+            "번호는 070…/010… 형식( +070 / +010 금지 ). trunk는 TLS여야 합니다."
         ),
     }
 
