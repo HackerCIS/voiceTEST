@@ -59,3 +59,6 @@
 필수 env: `LIVEKIT_URL`, `LIVEKIT_API_KEY`, `LIVEKIT_API_SECRET`, `LIVEKIT_OUTBOUND_TRUNK_ID`, `LIVEKIT_AGENT_NAME`, `CLAWOPS_FROM_NUMBER`  
 앱 밖에서 Agent 워커(`python agent.py dev`)가 떠 있어야 대화됩니다.  
 번호는 `070…` / `010…` (또는 `+82…`). `+070` / `+010` 금지. trunk Signaling은 **TLS**.
+
+
+전체 구조·인/아웃 콘솔 순서: [MODE05_CLAWOPS_LIVEKIT_GUIDE.md](./MODE05_CLAWOPS_LIVEKIT_GUIDE.md)
