@@ -25,17 +25,7 @@ load_dotenv(_REPO_ROOT / ".env")
 logger = logging.getLogger("clawops_phone")
 
 # Keep elder-care defaults aligned with app.main / .env.example
-DEFAULT_REALTIME_INSTRUCTIONS = """어르신들에게 따뜻한 안부 인사 전화를 걸어 드리는 역할입니다.
-
-부드럽고 다정하며 친근한 말투로 대화해 주세요. 한 번에 짧은 문장으로, 기다리지 않게 빠르게 이야기하세요. 어르신이 불편한 점이나 도움이 필요한지 간단히 물어봐 주세요.
-
-(실제 대화는 곧고 따뜻하게, 5~7턴의 짧은 왕복 대화로 진행됩니다.)
-
-# 참고사항
-
-- 너무 길거나 어려운 말은 사용하지 마세요.
-- 밝고 정감 있게, 천천히 또박또박 말해 주세요.
-- 건강, 식사, 생활 편의 등에 대해 간단히 안부를 묻고, 대화 흐름을 자연스럽게 이어가세요."""
+from app.prompts.anbu_realtime import resolve_instructions
 
 
 class ClawOpsConfigurationError(RuntimeError):
@@ -71,9 +61,9 @@ def build_agent(*, mode: str = "inbound"):
         _require_env("CLAWOPS_ACCOUNT_ID")
         _require_env("OPENAI_API_KEY")
 
-        instructions = _optional_env(
-            "OPENAI_REALTIME_INSTRUCTIONS",
-            DEFAULT_REALTIME_INSTRUCTIONS,
+        # Prefer coded inbound/outbound prompts; env can override.
+        instructions = resolve_instructions(
+            "outbound" if mode == "outbound" else "inbound"
         )
         voice = _optional_env("OPENAI_REALTIME_VOICE", "cedar")
         language = _optional_env("OPENAI_REALTIME_LANGUAGE", "ko")

@@ -26,7 +26,7 @@
 | **LiveKit Outbound trunk** | LiveKit이 ClawOps로 걸어 나갈 때 쓰는 출구 (TLS + digest) |
 | **Dispatch rule** | 인바운드 통화를 어느 Room / 어느 Agent에 붙일지 |
 | **Agent Dispatch** | 아웃바운드 시 앱이 Agent를 Room에 붙이는 API |
-| **Agent 워커** | 로컬 `agent.py` (또는 추후 자체 상담 AI). `agent_name`으로 등록 |
+| **Agent 워커** | repo `agents/phone_test_openai/agent.py` (또는 추후 자체 상담 AI). `agent_name`으로 등록. 프롬프트는 `app/prompts/anbu_realtime.py` |
 | **LiveKit Room** | AI와 전화 참가자가 만나는 자리 |
 
 ### 1.3 헷갈리기 쉬운 것
@@ -118,7 +118,7 @@ sequenceDiagram
 
 1. ClawOps **Business(또는 유료) + SIP 트렁크 부가** 활성
 2. LiveKit Cloud 프로젝트 (URL / API Key / Secret / SIP URI)
-3. 로컬 Agent 워커 폴더 (예: `livekit-phone-test/agent.py`)
+3. 로컬 Agent 워커 폴더 (예: `agents/phone_test_openai/agent.py`)
 4. voiceTEST 레포 + Mode 05 (outbound는 Agent Dispatch 포함 버전 권장, PR #4)
 
 참고 번호(예시): `07052767794`  
@@ -275,7 +275,7 @@ RTP 참고: `34.64.155.183`
 상담 AI는 Room의 Agent다. voiceTEST 앱이 워커를 대신 띄우지 않는다.
 
 ```bash
-cd /path/to/livekit-phone-test
+cd agents/phone_test_openai  # repo: voiceTEST
 source .venv/bin/activate
 python agent.py dev
 ```

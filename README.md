@@ -43,7 +43,8 @@ OPENAI_REALTIME_MODEL=gpt-realtime-2.1
 OPENAI_REALTIME_VOICE=cedar
 OPENAI_REALTIME_TRANSCRIPTION_MODEL=gpt-transcribe
 OPENAI_REALTIME_LANGUAGE=ko
-OPENAI_REALTIME_INSTRUCTIONS="어르신들에게 따뜻한 안부 인사 전화를 걸어 드리는 역할입니다. ..."
+# 기본 프롬프트는 app/prompts/anbu_realtime.py (인·아웃 별도). 필요 시만 오버라이드
+# OPENAI_REALTIME_INSTRUCTIONS=
 ```
 
 전체 기본 프롬프트는 `.env.example`에 들어 있습니다. FastAPI가 표준 OpenAI
