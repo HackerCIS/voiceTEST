@@ -329,8 +329,11 @@ Outbound burns the Trial’s short outbound budget — prefer inbound for most d
 
 기존 LiveKit 상담사(STT–LLM–TTS)를 유지한 채, 전화만 ClawOps SIP 트렁크로 붙입니다.
 
-- 설정 체크리스트: [docs/LIVEKIT_CLAWOPS_SETUP.md](./docs/LIVEKIT_CLAWOPS_SETUP.md)
-- 아키텍처 세션 노트: [docs/livekit-clawops-session.md](./docs/livekit-clawops-session.md)
+- 설정 체크리스트: [docs/02-LIVEKIT_CLAWOPS_SETUP.md](./docs/02-LIVEKIT_CLAWOPS_SETUP.md)
+- Mode 05 가이드: [docs/03-MODE05_CLAWOPS_LIVEKIT_GUIDE.md](./docs/03-MODE05_CLAWOPS_LIVEKIT_GUIDE.md)
+- 아키텍처 세션 노트: [docs/04-livekit-clawops-session.md](./docs/04-livekit-clawops-session.md)
+- ElevenLabs + GPT-5.4 가이드: [docs/01-ELEVENLABS_GPT54_AGENT_GUIDE.md](./docs/01-ELEVENLABS_GPT54_AGENT_GUIDE.md)
+- 문서 목차: [docs/README.md](./docs/README.md)
 - 설치: `pip install -r requirements-livekit.txt`
 - API: `GET /api/livekit-phone/health`, `POST /api/livekit-phone/token`, `POST /api/livekit-phone/outbound`
 

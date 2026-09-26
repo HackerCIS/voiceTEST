@@ -3,7 +3,7 @@
 전화 레이어만 ClawOps, 상담 AI는 LiveKit Room의 Agent 워커(지금은 로컬 `agent.py`)가 담당한다.  
 이 문서는 **실제로 검증된 구조**와 콘솔 설정 순서를 정리한다.
 
-관련 문서: [LIVEKIT_CLAWOPS_SETUP.md](./LIVEKIT_CLAWOPS_SETUP.md), [livekit-clawops-session.md](./livekit-clawops-session.md)
+관련 문서: [LIVEKIT_CLAWOPS_SETUP.md](./02-LIVEKIT_CLAWOPS_SETUP.md), [livekit-clawops-session.md](./04-livekit-clawops-session.md)
 
 ---
 
