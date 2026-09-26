@@ -47,7 +47,7 @@
 - 인바운드: 070 안내 + (가능하면) 모니터 룸 토큰
 - 아웃바운드 PoC: `POST /api/livekit-phone/outbound` → CreateSIPParticipant
 
-세션 배경: [livekit-clawops-session.md](./livekit-clawops-session.md)
+세션 배경: [livekit-clawops-session.md](./04-livekit-clawops-session.md)
 
 ## Mode 05 아웃바운드 (대화까지)
 
@@ -61,4 +61,4 @@
 번호는 `070…` / `010…` (또는 `+82…`). `+070` / `+010` 금지. trunk Signaling은 **TLS**.
 
 
-전체 구조·인/아웃 콘솔 순서: [MODE05_CLAWOPS_LIVEKIT_GUIDE.md](./MODE05_CLAWOPS_LIVEKIT_GUIDE.md)
+전체 구조·인/아웃 콘솔 순서: [MODE05_CLAWOPS_LIVEKIT_GUIDE.md](./03-MODE05_CLAWOPS_LIVEKIT_GUIDE.md)
