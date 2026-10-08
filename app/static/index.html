@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta name="color-scheme" content="dark" />
     <title>Voice Lab · 응답 레이턴시 비교</title>
-    <link rel="stylesheet" href="/static/styles.css?v=20260917-livekit" />
+    <link rel="stylesheet" href="/static/styles.css?v=20261008-gpt-live" />
   </head>
   <body>
     <main class="shell">
@@ -13,7 +13,7 @@
         <div>
           <p class="eyebrow"><span class="brand-mark" aria-hidden="true">ııı</span> VOICE LAB <span class="eyebrow-divider">/</span> LATENCY WORKSPACE</p>
           <h1>같은 질문, <span>얼마나 빠른 응답?</span></h1>
-          <p class="description">브라우저 음성 엔진과 ClawOps Trial 전화, LiveKit SIP 전화까지 한 화면에서 비교·점검하세요.</p>
+          <p class="description">브라우저 음성 엔진과 ClawOps 전화, LiveKit SIP 전화(Realtime · GPT-Live)를 한 화면에서 비교·점검하세요.</p>
         </div>
         <div class="saved-indicator"><span class="small-dot"></span> 누적 측정 <strong id="record-total">0</strong><span>회</span></div>
       </header>
@@ -25,7 +25,8 @@
           <button class="mode-button" data-mode="openai_realtime" aria-pressed="false" type="button"><span class="mode-number">02</span><span class="mode-name"><strong>OpenAI Realtime</strong><small>음성으로 듣고, 음성으로 응답</small></span><span class="config-state">확인 중</span></button>
           <button class="mode-button" data-mode="hybrid" aria-pressed="false" type="button"><span class="mode-number">03</span><span class="mode-name"><strong>ElevenLabs + OpenAI</strong><small>ElevenLabs 음성 + OpenAI LLM</small></span><span class="config-state">확인 중</span></button>
           <button class="mode-button" data-mode="clawops" aria-pressed="false" type="button"><span class="mode-number">04</span><span class="mode-name"><strong>ClawOps Phone</strong><small>수신 대기 · 발신 전화</small></span><span class="config-state">확인 중</span></button>
-          <button class="mode-button" data-mode="livekit_phone" aria-pressed="false" type="button"><span class="mode-number">05</span><span class="mode-name"><strong>LiveKit Phone</strong><small>ClawOps SIP · 기존 상담사</small></span><span class="config-state">확인 중</span></button>
+          <button class="mode-button" data-mode="livekit_phone" aria-pressed="false" type="button"><span class="mode-number">05</span><span class="mode-name"><strong>LiveKit Phone</strong><small>ClawOps SIP · gpt-realtime-2.1</small></span><span class="config-state">확인 중</span></button>
+          <button class="mode-button" data-mode="gpt_live_phone" aria-pressed="false" type="button"><span class="mode-number">06</span><span class="mode-name"><strong>GPT-Live Phone</strong><small>같은 SIP · gpt-live 듀얼채널</small></span><span class="config-state">확인 중</span></button>
         </div>
       </section>
 
@@ -47,9 +48,10 @@
             <p id="phone-help" class="form-hint">수신 대기를 시작한 뒤 내 070 번호로 전화해 주세요.</p>
           </fieldset>
           <fieldset id="livekit-settings" class="phone-settings" hidden>
-            <legend>LiveKit SIP (모드 05)</legend>
+            <legend id="livekit-legend">LiveKit SIP</legend>
             <p class="phone-from">ClawOps 070 <strong id="livekit-from-number">설정 확인 중</strong></p>
             <p class="phone-from">SIP URI <strong id="livekit-sip-uri">—</strong></p>
+            <p class="phone-from">Dispatch 워커 <strong id="livekit-agent-name">—</strong></p>
             <div class="phone-direction">
               <label><input type="radio" name="livekit-direction" value="inbound" checked /><span>인바운드 안내</span></label>
               <label><input type="radio" name="livekit-direction" value="outbound" /><span>아웃바운드 PoC</span></label>
@@ -91,7 +93,7 @@
             <p class="comparison-help">중앙값은 가운데 응답 시간, P95는 측정값의 95%가 이 시간 이내라는 뜻입니다. 각 엔진을 10회 이상 측정해 보세요.</p>
           </section>
           <section class="history-panel panel" aria-labelledby="history-title">
-            <div class="section-heading"><h2 id="history-title">턴별 측정 기록</h2><label class="sr-only" for="history-mode">측정 기록 엔진 필터</label><select id="history-mode"><option value="all">모든 엔진</option><option value="elevenlabs">ElevenLabs</option><option value="openai_realtime">OpenAI Realtime</option><option value="hybrid">ElevenLabs + OpenAI</option><option value="clawops">ClawOps Phone</option><option value="livekit_phone">LiveKit Phone</option></select></div>
+            <div class="section-heading"><h2 id="history-title">턴별 측정 기록</h2><label class="sr-only" for="history-mode">측정 기록 엔진 필터</label><select id="history-mode"><option value="all">모든 엔진</option><option value="elevenlabs">ElevenLabs</option><option value="openai_realtime">OpenAI Realtime</option><option value="hybrid">ElevenLabs + OpenAI</option><option value="clawops">ClawOps Phone</option><option value="livekit_phone">LiveKit Phone</option><option value="gpt_live_phone">GPT-Live Phone</option></select></div>
             <div class="history-scroll"><table id="history-table" hidden><caption class="sr-only">선택한 입력 기준의 최근 20개 측정 기록. 중단·실패한 턴은 평균에서 제외합니다.</caption><thead><tr><th scope="col">측정 시각</th><th scope="col">엔진 / 모델</th><th scope="col">응답 지연</th></tr></thead><tbody id="history-body"></tbody></table><div id="history-empty" class="history-empty"><span class="empty-chart" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i></span><strong>첫 번째 측정을 기다리고 있어요</strong><p>선택한 입력 기준의 측정 결과가 여기에 쌓입니다.</p></div></div>
             <div class="history-actions"><span id="history-count">0개 중 최근 0개</span><div><button id="export-measurements" class="text-button" type="button" disabled>JSON 내보내기 ↗</button><button id="reset-measurements" class="text-button" type="button" disabled>초기화</button></div></div>
             <p id="storage-note" class="storage-note"></p><div id="reset-notice" class="reset-notice" role="status" hidden>측정 기록을 비웠습니다.<button id="undo-reset" type="button" class="text-button">되돌리기</button></div>
@@ -107,6 +109,6 @@
       </div></details>
       <footer><span>VOICE LAB <span class="footer-divider">/</span> 직접 측정하는 음성 경험</span><span>음성과 대화는 선택한 엔진의 서비스로 전송됩니다.</span></footer>
     </main>
-    <script type="module" src="/static/app.js?v=20260917-livekit"></script>
+    <script type="module" src="/static/app.js?v=20261008-gpt-live-inbound"></script>
   </body>
 </html>

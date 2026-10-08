@@ -9,5 +9,6 @@
 | 03 | [03-MODE05_CLAWOPS_LIVEKIT_GUIDE.md](./03-MODE05_CLAWOPS_LIVEKIT_GUIDE.md) | Mode 05 (ClawOps SIP → LiveKit) 인·아웃바운드 가이드 |
 | 04 | [04-livekit-clawops-session.md](./04-livekit-clawops-session.md) | LiveKit–ClawOps 아키텍처·세션 노트 |
 | 05 | [05-Mode05_노인콜_개발자_인수인계_v1.md](./05-Mode05_노인콜_개발자_인수인계_v1.md) | Mode 05 노인콜 개발자 인수인계 |
+| 06 | [06-TestAgent-GPT-Live-지시서.md](./06-TestAgent-GPT-Live-지시서.md) | Mode 06 GPT-Live 워커를 TestAgent에 구현할 때의 지시 |
 
 프로젝트 개요·실행 방법은 루트 [README.md](../README.md)를 보세요.

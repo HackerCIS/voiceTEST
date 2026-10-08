@@ -32,10 +32,31 @@ const MODE_INFO = {
     label: "LiveKit Phone",
     supportsLatency: false,
     provider: "LiveKit · ClawOps SIP",
-    fallbackModel: "기존 LiveKit 상담사",
-    description: "ClawOps SIP 트렁크로 전화를 LiveKit 방에 붙입니다. 상담 STT·LLM·TTS는 기존 LiveKit Agent 워커가 담당합니다.",
+    fallbackModel: "gpt-realtime-2.1",
+    description: "ClawOps SIP로 전화를 LiveKit 방에 붙입니다. 상담은 gpt-realtime-2.1 LiveKit 워커가 담당합니다.",
+  },
+  gpt_live_phone: {
+    label: "GPT-Live Phone",
+    supportsLatency: false,
+    provider: "LiveKit · GPT-Live",
+    fallbackModel: "gpt-live-1 · gpt-5.6-luna",
+    description: "05와 같은 SIP·방 경로입니다. 방에 들어가는 워커만 gpt-live-1(음성)과 Responses 백엔드로 바뀝니다.",
   },
 };
+
+const LIVEKIT_MODES = new Set(["livekit_phone", "gpt_live_phone"]);
+
+function isLivekitMode(mode = selectedMode) {
+  return LIVEKIT_MODES.has(mode);
+}
+
+function livekitHealth(mode = selectedMode) {
+  return healthData?.modes?.[mode] || {};
+}
+
+function livekitApiPrefix(mode = selectedMode) {
+  return mode === "gpt_live_phone" ? "/api/gpt-live-phone" : "/api/livekit-phone";
+}
 
 const elements = {
   modeButtons: [...document.querySelectorAll(".mode-button")],
@@ -72,6 +93,8 @@ const elements = {
   livekitNumber: document.querySelector("#livekit-to-number"),
   livekitFromNumber: document.querySelector("#livekit-from-number"),
   livekitSipUri: document.querySelector("#livekit-sip-uri"),
+  livekitAgentName: document.querySelector("#livekit-agent-name"),
+  livekitLegend: document.querySelector("#livekit-legend"),
   livekitChecklist: document.querySelector("#livekit-checklist"),
   livekitHelp: document.querySelector("#livekit-help"),
 };
@@ -161,7 +184,7 @@ function isModeConfigured(mode = selectedMode) {
 
 function renderLivekitChecklist() {
   if (!elements.livekitChecklist) return;
-  const items = healthData?.modes?.livekit_phone?.checklist || [];
+  const items = livekitHealth().checklist || [];
   elements.livekitChecklist.replaceChildren();
   items.forEach((item) => {
     const li = document.createElement("li");
@@ -173,7 +196,8 @@ function renderLivekitChecklist() {
 function updateControls() {
   const busy = isConnecting || uiConnected;
   const clawopsMode = selectedMode === "clawops";
-  const livekitMode = selectedMode === "livekit_phone";
+  const livekitMode = isLivekitMode();
+  const gptLiveMode = selectedMode === "gpt_live_phone";
   const phoneMode = clawopsMode || livekitMode;
   const outbound = clawopsMode
     ? phoneDirection === "outbound"
@@ -213,19 +237,34 @@ function updateControls() {
     input.disabled = busy;
     input.checked = input.value === livekitDirection;
   });
+  const livekit = livekitHealth();
+  if (elements.livekitLegend) {
+    elements.livekitLegend.textContent = gptLiveMode
+      ? "LiveKit SIP (모드 06 · GPT-Live)"
+      : "LiveKit SIP (모드 05 · Realtime)";
+  }
   if (elements.livekitFromNumber) {
     elements.livekitFromNumber.textContent =
-      healthData?.modes?.livekit_phone?.fromNumber
+      livekit.fromNumber
       || healthData?.modes?.clawops?.fromNumber
       || "설정 필요";
   }
   if (elements.livekitSipUri) {
-    elements.livekitSipUri.textContent = healthData?.modes?.livekit_phone?.sipUri || "—";
+    elements.livekitSipUri.textContent = livekit.sipUri || healthData?.modes?.livekit_phone?.sipUri || "—";
+  }
+  if (elements.livekitAgentName) {
+    elements.livekitAgentName.textContent = livekit.agentName || "설정 필요";
   }
   if (elements.livekitHelp) {
-    elements.livekitHelp.textContent = outbound
-      ? "아웃바운드는 LiveKit CreateSIPParticipant → ClawOps 트렁크(미검증 PoC)입니다. 실패 시 플랜B(REST+Stream)를 검토하세요."
-      : "인바운드: ClawOps SIP(TLS) → LiveKit trunk → 기존 워커. 휴대폰에서 070으로 걸어 테스트하세요.";
+    if (gptLiveMode && outbound) {
+      elements.livekitHelp.textContent = "발신은 GPT-Live 워커를 먼저 dispatch한 뒤 같은 방으로 SIP 전화를 겁니다. 05 워커와 이름이 달라야 합니다.";
+    } else if (gptLiveMode) {
+      elements.livekitHelp.textContent = "착신 안내를 누르면 070 착신 규칙을 GPT-Live 워커로 바꿉니다. 그 다음 휴대폰에서 070으로 거세요. 05 착신 안내를 누르면 규칙이 다시 Realtime 워커로 돌아갑니다.";
+    } else if (outbound) {
+      elements.livekitHelp.textContent = "아웃바운드는 gpt-realtime-2.1 워커를 dispatch한 뒤 CreateSIPParticipant로 발신합니다. trunk는 TLS여야 합니다.";
+    } else {
+      elements.livekitHelp.textContent = "인바운드: ClawOps SIP(TLS) → LiveKit trunk → gpt-realtime-2.1 워커. 휴대폰에서 070으로 걸어 테스트하세요.";
+    }
   }
   if (livekitMode) renderLivekitChecklist();
   elements.mute.hidden = phoneMode;
@@ -233,8 +272,10 @@ function updateControls() {
   elements.metricsPanel.hidden = phoneMode;
   if (clawopsMode) {
     elements.start.textContent = outbound ? "전화 걸기" : "수신 대기 시작";
+  } else if (gptLiveMode) {
+    elements.start.textContent = outbound ? "GPT-Live 발신" : "GPT-Live 착신 안내";
   } else if (livekitMode) {
-    elements.start.textContent = outbound ? "SIP 발신 PoC" : "인바운드 점검 시작";
+    elements.start.textContent = outbound ? "SIP 발신" : "인바운드 점검 시작";
   } else {
     elements.start.textContent = "대화 시작";
   }
@@ -800,20 +841,24 @@ function attachPhoneSession(runId, data) {
 
 
 async function startLivekitSession(runId) {
-  const livekit = healthData?.modes?.livekit_phone || {};
+  const gptLiveMode = selectedMode === "gpt_live_phone";
+  const livekit = livekitHealth();
   clearTranscript();
   if (livekitDirection === "outbound") {
     const toNumber = elements.livekitNumber.value.trim();
-    const data = await requestJson("/api/livekit-phone/outbound", {
+    const data = await requestJson(`${livekitApiPrefix()}/outbound`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ toNumber }),
     });
+    const models = data.voiceModel && data.backendModel
+      ? ` · ${data.voiceModel} + ${data.backendModel}`
+      : "";
     appendMessage(
       "agent",
-      `LiveKit SIP 발신: ${data.fromNumber || "070"} → ${data.toNumber} (room ${data.roomName}` +
+      `LiveKit SIP 발신${gptLiveMode ? " (GPT-Live)" : ""}: ${data.fromNumber || "070"} → ${data.toNumber} (room ${data.roomName}` +
         (data.agentName ? `, agent ${data.agentName}` : "") +
-        `). ${data.note || "워커가 떠 있어야 대화됩니다."}`,
+        `${models}). ${data.note || "워커가 떠 있어야 대화됩니다."}`,
       { trackTurn: false },
     );
     markConnected(data.sipCallId || data.roomName || runId);
@@ -828,9 +873,10 @@ async function startLivekitSession(runId) {
   }
 
   const roomName = `${livekit.roomPrefix || "call-"}lab-${runId.slice(0, 8)}`;
+  const routed = await requestJson(`${livekitApiPrefix()}/inbound`, { method: "POST" });
   let tokenInfo = null;
   try {
-    tokenInfo = await requestJson("/api/livekit-phone/token", {
+    tokenInfo = await requestJson(`${livekitApiPrefix()}/token`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ roomName }),
@@ -839,9 +885,14 @@ async function startLivekitSession(runId) {
     console.warn(error);
   }
   const fromNumber = livekit.fromNumber || healthData?.modes?.clawops?.fromNumber || "070";
+  const workerName = routed.agentName || livekit.agentName || (gptLiveMode ? "GPT-Live 워커" : "Realtime 워커");
+  const switched = routed.previousAgentName && routed.previousAgentName !== workerName
+    ? ` 이전 착신 워커 ${routed.previousAgentName}에서 바꿨습니다.`
+    : "";
   appendMessage(
     "agent",
-    `인바운드 대기 안내: 휴대폰에서 ${fromNumber} 로 전화하세요. ClawOps SIP(TLS) → LiveKit trunk → 기존 Agent 워커가 받아야 합니다.`,
+    `착신 규칙을 ${workerName} 로 맞춰 두었습니다.${switched} 휴대폰에서 ${fromNumber} 로 전화하세요.` +
+      (gptLiveMode && routed.voiceModel ? ` 음성 ${routed.voiceModel}, 백엔드 ${routed.backendModel}.` : ""),
     { trackTurn: false },
   );
   if (tokenInfo?.participantToken) {
@@ -881,7 +932,7 @@ async function startSelectedMode() {
       return;
     }
   }
-  if (selectedMode === "livekit_phone" && livekitDirection === "outbound") {
+  if (isLivekitMode() && livekitDirection === "outbound") {
     try {
       normalizePhoneNumber(elements.livekitNumber.value);
     } catch (error) {
@@ -903,7 +954,7 @@ async function startSelectedMode() {
 
   try {
     const session =
-      selectedMode === "livekit_phone"
+      isLivekitMode()
         ? await startLivekitSession(runId)
         : selectedMode === "clawops"
           ? await startClawopsSession(runId)

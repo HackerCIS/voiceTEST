@@ -34,11 +34,13 @@ h3 { margin: 0; font-size: 12px; }
 .section-heading > p { font-size: 11px; color: var(--subtle); margin: 0; }
 .panel-label { font: 10px var(--mono); color: var(--subtle); letter-spacing: .8px; }
 .mode-section { margin-bottom: 24px; }
-.mode-tabs { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 12px; }
+.mode-tabs { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
 .mode-button { --engine-color: var(--purple); display: flex; position: relative; align-items: center; gap: 13px; padding: 21px 17px; min-height: 91px; text-align: left; border: 1px solid var(--line); border-radius: 12px; background: #14171d; }
 [data-mode="openai_realtime"] { --engine-color: var(--mint); }
 [data-mode="hybrid"] { --engine-color: var(--blue); }
 [data-mode="clawops"] { --engine-color: #e9c174; }
+[data-mode="livekit_phone"] { --engine-color: #f0a3c2; }
+[data-mode="gpt_live_phone"] { --engine-color: #8fd0ff; }
 .mode-button.active { border-color: var(--engine-color); background: color-mix(in srgb, var(--engine-color) 8%, #14171d); }
 .mode-button:disabled { opacity: .58; }
 .mode-button.active:disabled { opacity: 1; }
@@ -67,8 +69,9 @@ h3 { margin: 0; font-size: 12px; }
 .phone-from { display: flex; justify-content: space-between; gap: 10px; margin: 13px 0; color: var(--muted); font-size: 11px; }
 .phone-from strong { color: #e9c174; font: 12px var(--mono); }
 #phone-destination label { display: block; margin-bottom: 8px; font-size: 12px; }
-#phone-to-number { box-sizing: border-box; width: 100%; padding: 12px; border: 1px solid #49402c; border-radius: 7px; background: #0f1218; color: #e9ecf1; font: 15px var(--mono); }
-#phone-to-number:focus { outline: 2px solid #e9c174; outline-offset: 2px; }
+#phone-to-number, #livekit-to-number { box-sizing: border-box; width: 100%; padding: 12px; border: 1px solid #49402c; border-radius: 7px; background: #0f1218; color: #e9ecf1; font: 15px var(--mono); }
+#phone-to-number:focus, #livekit-to-number:focus { outline: 2px solid #e9c174; outline-offset: 2px; }
+#livekit-destination label { display: block; margin-bottom: 8px; font-size: 12px; }
 #phone-help { min-height: 32px; }
 .phone-mode .controls { grid-template-columns: 1fr 1fr; }
 .phone-mode .controls .primary { background: #e9c174; border-color: #e9c174; color: #211a0d; }

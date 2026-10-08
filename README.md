@@ -327,7 +327,7 @@ Outbound burns the Trial’s short outbound budget — prefer inbound for most d
 
 ## 6. LiveKit Phone (mode 05, ClawOps SIP)
 
-기존 LiveKit 상담사(STT–LLM–TTS)를 유지한 채, 전화만 ClawOps SIP 트렁크로 붙입니다.
+gpt-realtime-2.1 LiveKit 워커를 유지한 채, 전화만 ClawOps SIP 트렁크로 붙입니다.
 
 - 설정 체크리스트: [docs/02-LIVEKIT_CLAWOPS_SETUP.md](./docs/02-LIVEKIT_CLAWOPS_SETUP.md)
 - Mode 05 가이드: [docs/03-MODE05_CLAWOPS_LIVEKIT_GUIDE.md](./docs/03-MODE05_CLAWOPS_LIVEKIT_GUIDE.md)
@@ -338,3 +338,11 @@ Outbound burns the Trial’s short outbound budget — prefer inbound for most d
 - API: `GET /api/livekit-phone/health`, `POST /api/livekit-phone/token`, `POST /api/livekit-phone/outbound`
 
 모드 04(ClawOpsAgent)와 달리 상담 엔진은 LiveKit 워커입니다. 동일 070에서는 라우팅을 SIP로 바꿔야 합니다.
+
+## 7. GPT-Live Phone (mode 06)
+
+모드 05와 같은 SIP 트렁크·발신 순서입니다. 방에 부르는 워커 이름만 `LIVEKIT_GPT_LIVE_AGENT_NAME`입니다. GPT-Live 세션은 이 앱이 열지 않습니다. 워커 구현 지시는 [docs/06-TestAgent-GPT-Live-지시서.md](./docs/06-TestAgent-GPT-Live-지시서.md)에 있습니다.
+
+- API: `GET /api/gpt-live-phone/health`, `POST /api/gpt-live-phone/token`, `POST /api/gpt-live-phone/outbound`
+- 발신: GPT-Live 워커를 dispatch한 뒤 `CreateSIPParticipant`. metadata는 `{}`라서 워커가 다시 걸지 않고 SIP 참가자를 기다립니다.
+- 착신: `POST /api/gpt-live-phone/inbound`가 공유 Dispatch rule의 워커 이름을 GPT-Live로 바꿉니다. 모드 05 착신은 그 규칙을 Realtime 워커로 되돌립니다. 070 번호의 착신 워커는 마지막으로 누른 착신 버튼을 따릅니다.

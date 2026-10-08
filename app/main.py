@@ -420,6 +420,7 @@ async def health() -> dict[str, Any]:
                 ],
             },
             "livekit_phone": livekit_phone.health_payload(),
+            "gpt_live_phone": livekit_phone.health_payload_gpt_live(),
         },
     }
 
@@ -561,6 +562,34 @@ async def livekit_phone_token(
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
+def _livekit_outbound_error(exc: Exception) -> HTTPException:
+    if isinstance(exc, (ValueError, RuntimeError)):
+        return HTTPException(status_code=400, detail=str(exc))
+    logger.exception("LiveKit CreateSIPParticipant failed")
+    return HTTPException(
+        status_code=502,
+        detail=(
+            f"LiveKit outbound SIP 실패: {exc}. "
+            "CreateSIPParticipant↔ClawOps는 미검증일 수 있습니다. "
+            "플랜B(REST+Stream)를 검토하세요."
+        ),
+    )
+
+
+@app.post("/api/livekit-phone/inbound")
+async def livekit_phone_inbound() -> dict[str, Any]:
+    try:
+        return await livekit_phone.prepare_realtime_inbound()
+    except RuntimeError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        logger.exception("LiveKit inbound dispatch update failed")
+        raise HTTPException(
+            status_code=502,
+            detail=f"착신 규칙을 바꾸지 못했습니다: {exc}",
+        ) from exc
+
+
 @app.post("/api/livekit-phone/outbound")
 async def livekit_phone_outbound(payload: LiveKitOutboundRequest) -> dict[str, Any]:
     try:
@@ -568,20 +597,54 @@ async def livekit_phone_outbound(payload: LiveKitOutboundRequest) -> dict[str, A
             to_number=payload.to_number,
             room_name=payload.room_name,
         )
-    except ValueError as exc:
+    except Exception as exc:
+        raise _livekit_outbound_error(exc) from exc
+
+
+@app.get("/api/gpt-live-phone/health")
+async def gpt_live_phone_health() -> dict[str, Any]:
+    return livekit_phone.health_payload_gpt_live()
+
+
+@app.post("/api/gpt-live-phone/token")
+async def gpt_live_phone_token(
+    payload: LiveKitMonitorTokenRequest | None = None,
+) -> dict[str, Any]:
+    cfg = livekit_phone.LiveKitPhoneConfig.from_env()
+    room = (payload.room_name if payload else None) or f"{cfg.room_prefix}monitor"
+    try:
+        return livekit_phone.create_monitor_token(
+            room_name=room,
+            identity=payload.identity if payload else None,
+            config=cfg,
+        )
+    except RuntimeError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.post("/api/gpt-live-phone/inbound")
+async def gpt_live_phone_inbound() -> dict[str, Any]:
+    try:
+        return await livekit_phone.prepare_gpt_live_inbound()
     except RuntimeError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except Exception as exc:
-        logger.exception("LiveKit CreateSIPParticipant failed")
+        logger.exception("GPT-Live inbound dispatch update failed")
         raise HTTPException(
             status_code=502,
-            detail=(
-                f"LiveKit outbound SIP 실패: {exc}. "
-                "CreateSIPParticipant↔ClawOps는 미검증일 수 있습니다. "
-                "플랜B(REST+Stream)를 검토하세요."
-            ),
+            detail=f"착신 규칙을 바꾸지 못했습니다: {exc}",
         ) from exc
+
+
+@app.post("/api/gpt-live-phone/outbound")
+async def gpt_live_phone_outbound(payload: LiveKitOutboundRequest) -> dict[str, Any]:
+    try:
+        return await livekit_phone.create_gpt_live_outbound(
+            to_number=payload.to_number,
+            room_name=payload.room_name,
+        )
+    except Exception as exc:
+        raise _livekit_outbound_error(exc) from exc
 
 
 @app.post("/api/session")
