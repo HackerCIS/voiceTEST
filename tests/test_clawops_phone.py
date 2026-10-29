@@ -395,3 +395,16 @@ def test_stop_does_not_interrupt_cleanup_of_an_ended_call():
         assert not session.task.cancelled()
 
     asyncio.run(run())
+
+
+def test_phone_uses_direction_prompts(sdk, monkeypatch):
+    monkeypatch.delenv("OPENAI_REALTIME_INSTRUCTIONS", raising=False)
+    monkeypatch.delenv("OPENAI_REALTIME_INSTRUCTIONS_INBOUND", raising=False)
+    monkeypatch.delenv("OPENAI_REALTIME_INSTRUCTIONS_OUTBOUND", raising=False)
+    clawops_phone.build_agent(mode="inbound")
+    inbound_prompt = sdk.OpenAIRealtime.call_args.kwargs["system_prompt"]
+    clawops_phone.build_agent(mode="outbound")
+    outbound_prompt = sdk.OpenAIRealtime.call_args.kwargs["system_prompt"]
+    assert "방향: inbound" in inbound_prompt
+    assert "방향: outbound" in outbound_prompt
+    assert inbound_prompt != outbound_prompt
