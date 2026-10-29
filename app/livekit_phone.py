@@ -10,6 +10,7 @@ from __future__ import annotations
 import logging
 import os
 import re
+import time
 import uuid
 from dataclasses import dataclass
 from typing import Any
@@ -463,6 +464,50 @@ def _point_rule_agent(rule: Any, agent_name: str) -> list[str]:
         if len(agents) > 1:
             del agents[1:]
     return previous
+
+
+async def find_active_call_room(
+    config: LiveKitPhoneConfig | None = None,
+    *,
+    max_age_ms: int = 3 * 60 * 1000,
+) -> dict[str, Any]:
+    """Return the newest live call room. Lab monitor rooms are not calls."""
+    cfg = config or LiveKitPhoneConfig.from_env()
+    if not cfg.credentials_ready:
+        raise RuntimeError("LIVEKIT_URL / LIVEKIT_API_KEY / LIVEKIT_API_SECRET 필요")
+    try:
+        from livekit import api
+    except ImportError as exc:
+        raise RuntimeError(
+            "livekit-api 미설치. pip install -r requirements-livekit.txt"
+        ) from exc
+
+    lk = api.LiveKitAPI(cfg.url, cfg.api_key, cfg.api_secret)
+    try:
+        listed = await lk.room.list_rooms(api.ListRoomsRequest())
+    finally:
+        await lk.aclose()
+
+    now_ms = int(time.time() * 1000)
+    prefix = cfg.room_prefix
+    best: tuple[int, str, int] | None = None
+    for room in getattr(listed, "rooms", []) or []:
+        name = getattr(room, "name", "") or ""
+        if not name.startswith(prefix) or "lab-" in name or "monitor" in name:
+            continue
+        participants = int(getattr(room, "num_participants", 0) or 0)
+        if participants < 1:
+            continue
+        created_ms = int(getattr(room, "creation_time_ms", 0) or 0)
+        if not created_ms:
+            created_ms = int(getattr(room, "creation_time", 0) or 0) * 1000
+        if created_ms and now_ms - created_ms > max_age_ms:
+            continue
+        if best is None or created_ms >= best[0]:
+            best = (created_ms, name, participants)
+    if best is None:
+        return {"roomName": None}
+    return {"roomName": best[1], "participants": best[2]}
 
 
 async def point_inbound_dispatch(

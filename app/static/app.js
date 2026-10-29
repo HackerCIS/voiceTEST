@@ -1,46 +1,60 @@
-import { formatDuration } from "./latency.js?v=20260917-1";
-import { createLatencyDashboard } from "./latency-ui.js?v=20260917-1";
+import { formatDuration } from "./latency.js?v=20261022-v4";
+import { createLatencyDashboard } from "./latency-ui.js?v=20261022-v4";
 import { createPhoneSession, normalizePhoneNumber, phoneStatusLabel } from "./phone-client.js?v=20260917-2";
+import { connectLivekitTranscript } from "./livekit-transcript.js?v=20261008-transcript";
 
 const MODE_INFO = {
   elevenlabs: {
+    number: "01",
     label: "ElevenLabs",
     provider: "ElevenLabs Agent",
     fallbackModel: "Agent 설정 모델",
-    description: "ElevenLabs가 음성 인식, LLM, 음성 합성과 턴 제어를 모두 담당합니다.",
+    description: "듣고, 생각하고, 말하는 일을 ElevenLabs가 모두 합니다. 지금 쓰는 음성의 기준입니다.",
   },
   openai_realtime: {
+    number: "02",
     label: "OpenAI Realtime",
     provider: "OpenAI Realtime",
     fallbackModel: "gpt-realtime-2.1",
-    description: "OpenAI Realtime 모델이 WebRTC로 음성을 직접 듣고 바로 음성으로 응답합니다.",
+    description: "음성을 바로 듣고, 글로 옮기지 않은 채 말로 답합니다.",
   },
   hybrid: {
+    number: "03",
     label: "ElevenLabs + OpenAI",
     provider: "ElevenLabs Agent + OpenAI LLM",
     fallbackModel: "gpt-5.4",
-    description: "ElevenLabs가 ASR·TTS·턴 제어를 맡고, FastAPI 프록시를 통해 OpenAI GPT-5.4가 답변을 생성합니다.",
+    description: "목소리는 ElevenLabs, 답 문장은 OpenAI입니다. 07과 비교할 기존 음성입니다.",
   },
   clawops: {
+    number: "04",
     label: "ClawOps Phone",
     supportsLatency: false,
     provider: "ClawOps Phone",
     fallbackModel: "gpt-realtime · 070",
-    description: "내 070 번호로 전화를 받거나 원하는 번호로 전화를 걸어 OpenAI Realtime과 대화하세요.",
+    description: "브라우저가 아니라 070 전화입니다. 받으면 OpenAI Realtime이 이야기합니다.",
   },
   livekit_phone: {
+    number: "05",
     label: "LiveKit Phone",
     supportsLatency: false,
     provider: "LiveKit · ClawOps SIP",
     fallbackModel: "gpt-realtime-2.1",
-    description: "ClawOps SIP로 전화를 LiveKit 방에 붙입니다. 상담은 gpt-realtime-2.1 LiveKit 워커가 담당합니다.",
+    description: "070 전화를 LiveKit 방에 붙입니다. 상담은 gpt-realtime-2.1이 합니다.",
   },
   gpt_live_phone: {
+    number: "06",
     label: "GPT-Live Phone",
     supportsLatency: false,
     provider: "LiveKit · GPT-Live",
     fallbackModel: "gpt-live-1 · gpt-5.6-luna",
-    description: "05와 같은 SIP·방 경로입니다. 방에 들어가는 워커만 gpt-live-1(음성)과 Responses 백엔드로 바뀝니다.",
+    description: "05와 같은 전화입니다. 말은 gpt-live가 하고, 판단은 뒤의 모델이 합니다.",
+  },
+  v4_turbo: {
+    number: "07",
+    label: "v4 Turbo",
+    provider: "ElevenLabs v4 Turbo + OpenAI",
+    fallbackModel: "v4 Turbo · gpt-5.4",
+    description: "03과 같은 OpenAI 답변입니다. 목소리만 ElevenLabs v4 Turbo로 바꿉니다. 쉼, 말투, 긴 대화의 음색을 비교합니다.",
   },
 };
 
@@ -282,11 +296,32 @@ function updateControls() {
 }
 
 function clearTranscript() {
+  transcriptNodes.clear();
   elements.transcript.replaceChildren();
   const emptyMessage = document.createElement("p");
   emptyMessage.className = "empty-message";
   emptyMessage.textContent = "대화를 시작하면 메시지가 여기에 표시됩니다.";
   elements.transcript.append(emptyMessage);
+}
+
+const transcriptNodes = new Map();
+
+function upsertTranscript({ id, role, text }) {
+  elements.transcript.querySelector(".empty-message")?.remove();
+  let item = transcriptNodes.get(id);
+  if (!item || !item.isConnected) {
+    item = document.createElement("article");
+    item.className = `message ${role === "user" ? "user" : "agent"}`;
+    const label = document.createElement("span");
+    label.className = "message-role";
+    label.textContent = role === "user" ? "어르신" : "퐁이";
+    const content = document.createElement("p");
+    item.append(label, content);
+    elements.transcript.append(item);
+    transcriptNodes.set(id, item);
+  }
+  item.querySelector("p").textContent = text;
+  elements.transcript.scrollTop = elements.transcript.scrollHeight;
 }
 
 function appendMessage(role, message) {
@@ -840,6 +875,44 @@ function attachPhoneSession(runId, data) {
 }
 
 
+async function watchCallTranscript(runId, roomName) {
+  const tokenInfo = await requestJson("/api/livekit-phone/token", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ roomName }),
+  });
+  return connectLivekitTranscript({
+    serverUrl: tokenInfo.serverUrl,
+    token: tokenInfo.participantToken,
+    isCurrent: () => currentRunId === runId,
+    onSegment: (segment) => upsertTranscript(segment),
+  });
+}
+
+function followInboundTranscript(runId, transcript) {
+  const deadline = Date.now() + 180000;
+  void (async () => {
+    while (!transcript.stopped && currentRunId === runId && Date.now() < deadline) {
+      try {
+        const found = await requestJson("/api/livekit-phone/active-room");
+        if (found.roomName) {
+          const watch = await watchCallTranscript(runId, found.roomName);
+          if (transcript.stopped || currentRunId !== runId) {
+            await watch.stop();
+            return;
+          }
+          transcript.watch = watch;
+          appendMessage("agent", `대화 글 수신 중 (${found.roomName}).`);
+          return;
+        }
+      } catch (error) {
+        console.warn(error);
+      }
+      await new Promise((resolve) => setTimeout(resolve, 2000));
+    }
+  })();
+}
+
 async function startLivekitSession(runId) {
   const gptLiveMode = selectedMode === "gpt_live_phone";
   const livekit = livekitHealth();
@@ -862,9 +935,21 @@ async function startLivekitSession(runId) {
       { trackTurn: false },
     );
     markConnected(data.sipCallId || data.roomName || runId);
+    const transcript = { stopped: false, watch: null };
+    if (!gptLiveMode && data.roomName) {
+      try {
+        transcript.watch = await watchCallTranscript(runId, data.roomName);
+        appendMessage("agent", "대화 글 수신을 시작했습니다. 말한 내용이 여기에 표시됩니다.");
+      } catch (error) {
+        appendMessage("agent", `대화 글을 받지 못했습니다. ${error.message || error}`);
+      }
+    }
     return {
       id: data.sipCallId || data.roomName || runId,
-      end: async () => {},
+      end: async () => {
+        transcript.stopped = true;
+        await transcript.watch?.stop();
+      },
       setMuted: () => {},
       sendText: () => {
         throw new Error("LiveKit Phone 모드에서는 텍스트 입력을 지원하지 않습니다.");
@@ -910,9 +995,17 @@ async function startLivekitSession(runId) {
   }
   renderLivekitChecklist();
   markConnected(roomName);
+  const transcript = { stopped: false, watch: null };
+  if (!gptLiveMode) {
+    appendMessage("agent", "통화가 연결되면 어르신과 퐁이의 말이 여기에 글로 표시됩니다.");
+    followInboundTranscript(runId, transcript);
+  }
   return {
     id: roomName,
-    end: async () => {},
+    end: async () => {
+      transcript.stopped = true;
+      await transcript.watch?.stop();
+    },
     setMuted: () => {},
     sendText: () => {
       throw new Error("LiveKit Phone 모드에서는 텍스트 입력을 지원하지 않습니다.");
