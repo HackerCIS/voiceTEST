@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import json
 import logging
 import os
@@ -12,13 +13,14 @@ from typing import Any, AsyncIterator, Literal
 
 import httpx
 from dotenv import load_dotenv
-from fastapi import FastAPI, HTTPException, Query, Request
+from fastapi import FastAPI, File, Form, HTTPException, Query, Request, UploadFile
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from app.phone_session import PhoneSession, normalize_phone_number
-from app import livekit_phone
+from app import livekit_phone, v4_pipeline
+from app.voice_delivery import wants_voice_delivery, with_voice_delivery
 
 load_dotenv()
 
@@ -62,7 +64,7 @@ DEFAULT_HYBRID_INSTRUCTIONS = """당신은 ElevenLabs 음성 에이전트의 대
 class RuntimeConfig:
     elevenlabs_agent_id: str
     elevenlabs_openai_agent_id: str
-    elevenlabs_v4_turbo_agent_id: str
+    elevenlabs_v4_voice_id: str
     elevenlabs_api_key: str
     openai_api_key: str
     openai_project_id: str
@@ -105,9 +107,7 @@ def get_runtime_config() -> RuntimeConfig:
         elevenlabs_openai_agent_id=os.getenv(
             "ELEVENLABS_OPENAI_AGENT_ID", ""
         ).strip(),
-        elevenlabs_v4_turbo_agent_id=os.getenv(
-            "ELEVENLABS_V4_TURBO_AGENT_ID", ""
-        ).strip(),
+        elevenlabs_v4_voice_id=os.getenv("ELEVENLABS_V4_VOICE_ID", "").strip(),
         elevenlabs_api_key=os.getenv("ELEVENLABS_API_KEY", "").strip(),
         openai_api_key=os.getenv("OPENAI_API_KEY", "").strip(),
         openai_project_id=os.getenv("OPENAI_PROJECT_ID", "").strip(),
@@ -409,24 +409,34 @@ async def health() -> dict[str, Any]:
             },
             "v4_turbo": {
                 "configured": bool(
-                    config.elevenlabs_v4_turbo_agent_id
+                    config.elevenlabs_api_key
+                    and config.elevenlabs_v4_voice_id
                     and config.openai_api_key
-                    and config.custom_llm_shared_secret
                 ),
-                "model": f"v4 Turbo · {config.openai_llm_model}",
-                "proxyUrl": proxy_url,
+                "model": f"scribe_v2 · {config.openai_llm_model} · eleven_v4_turbo",
                 "missing": [
                     name
                     for name, value in (
-                        (
-                            "ELEVENLABS_V4_TURBO_AGENT_ID",
-                            config.elevenlabs_v4_turbo_agent_id,
-                        ),
+                        ("ELEVENLABS_API_KEY", config.elevenlabs_api_key),
+                        ("ELEVENLABS_V4_VOICE_ID", config.elevenlabs_v4_voice_id),
                         ("OPENAI_API_KEY", config.openai_api_key),
-                        (
-                            "CUSTOM_LLM_SHARED_SECRET",
-                            config.custom_llm_shared_secret,
-                        ),
+                    )
+                    if not value
+                ],
+            },
+            "v4": {
+                "configured": bool(
+                    config.elevenlabs_api_key
+                    and config.elevenlabs_v4_voice_id
+                    and config.openai_api_key
+                ),
+                "model": f"scribe_v2 · {config.openai_llm_model} · eleven_v4",
+                "missing": [
+                    name
+                    for name, value in (
+                        ("ELEVENLABS_API_KEY", config.elevenlabs_api_key),
+                        ("ELEVENLABS_V4_VOICE_ID", config.elevenlabs_v4_voice_id),
+                        ("OPENAI_API_KEY", config.openai_api_key),
                     )
                     if not value
                 ],
@@ -689,18 +699,82 @@ async def gpt_live_phone_outbound(payload: LiveKitOutboundRequest) -> dict[str, 
         raise _livekit_outbound_error(exc) from exc
 
 
+@app.post("/api/v4/turn")
+async def v4_turn(
+    request: Request,
+    audio: UploadFile | None = File(None),
+    text: str = Form(""),
+    sessionId: str = Form(""),
+    greet: str = Form(""),
+    tts: str = Form("turbo"),
+) -> JSONResponse:
+    """One dialogue turn: ElevenLabs STT, OpenAI text, then v4 Turbo or v4."""
+    config = get_runtime_config()
+    missing = [
+        name
+        for name, value in (
+            ("ELEVENLABS_API_KEY", config.elevenlabs_api_key),
+            ("ELEVENLABS_V4_VOICE_ID", config.elevenlabs_v4_voice_id),
+            ("OPENAI_API_KEY", config.openai_api_key),
+        )
+        if not value
+    ]
+    if missing:
+        raise HTTPException(
+            status_code=503,
+            detail=f"서버의 {', '.join(missing)}가 설정되지 않았습니다.",
+        )
+
+    audio_bytes = b""
+    filename = "speech.webm"
+    content_type = "audio/webm"
+    if audio is not None:
+        audio_bytes = await audio.read(8_000_001)
+        if len(audio_bytes) > 8_000_000:
+            raise HTTPException(
+                status_code=413,
+                detail="오디오가 너무 깁니다. 20초 안쪽으로 다시 말해 주세요.",
+            )
+        filename = audio.filename or filename
+        content_type = audio.content_type or content_type
+
+    turn = await v4_pipeline.run_turn(
+        request.app.state.stream_client,
+        session_id=sessionId.strip() or secrets.token_hex(8),
+        api_key=config.elevenlabs_api_key,
+        openai_api_key=config.openai_api_key,
+        voice_id=config.elevenlabs_v4_voice_id,
+        llm_model=config.openai_llm_model,
+        tts_model=v4_pipeline.resolve_tts_model(tts),
+        project_id=config.openai_project_id,
+        org_id=config.openai_org_id,
+        text=text,
+        audio=audio_bytes,
+        filename=filename,
+        content_type=content_type,
+        greet=greet.strip().lower() in {"1", "true", "yes"},
+    )
+    return JSONResponse(
+        {
+            "sessionId": turn.session_id,
+            "userText": turn.user_text,
+            "agentText": turn.agent_text,
+            "sampleRate": 24000,
+            "audioBase64": base64.b64encode(turn.audio).decode("ascii"),
+        },
+        headers={"Cache-Control": "no-store"},
+    )
+
+
 @app.post("/api/session")
 async def create_elevenlabs_session(
     request: Request,
-    mode: Literal["elevenlabs", "hybrid", "v4_turbo"] = Query("elevenlabs"),
+    mode: Literal["elevenlabs", "hybrid"] = Query("elevenlabs"),
 ) -> JSONResponse:
     config = get_runtime_config()
     if mode == "hybrid":
         agent_id = config.elevenlabs_openai_agent_id
         variable_name = "ELEVENLABS_OPENAI_AGENT_ID"
-    elif mode == "v4_turbo":
-        agent_id = config.elevenlabs_v4_turbo_agent_id
-        variable_name = "ELEVENLABS_V4_TURBO_AGENT_ID"
     else:
         agent_id = config.elevenlabs_agent_id
         variable_name = "ELEVENLABS_AGENT_ID"
@@ -762,6 +836,8 @@ async def create_openai_realtime_token(request: Request) -> JSONResponse:
 
 @app.post("/responses", response_model=None, include_in_schema=False)
 @app.post("/v1/responses", response_model=None)
+@app.post("/v4/responses", response_model=None, include_in_schema=False)
+@app.post("/v4/v1/responses", response_model=None)
 async def openai_responses_proxy(request: Request) -> JSONResponse | StreamingResponse:
     """OpenAI-compatible SSE proxy used by the ElevenLabs Custom LLM agent.
 
@@ -791,7 +867,10 @@ async def openai_responses_proxy(request: Request) -> JSONResponse | StreamingRe
 
     body["model"] = config.openai_llm_model
     body["stream"] = True
-    body["instructions"] = config.openai_llm_instructions
+    instructions = config.openai_llm_instructions
+    if wants_voice_delivery(body, request.url.path):
+        instructions = with_voice_delivery(instructions)
+    body["instructions"] = instructions
     body.pop("elevenlabs_extra_body", None)
     body.pop("user_id", None)
     configured_prompt = prompt_config(config)

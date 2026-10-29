@@ -1,7 +1,7 @@
 import {
   STORAGE_KEY, MAX_RECORDS, INPUT_LABELS, STATUS_LABELS,
   TurnLatency, formatDuration, parseRecords, summarize,
-} from "./latency.js?v=20261022-v4";
+} from "./latency.js?v=20261030-v4pair";
 
 const $ = (selector) => document.querySelector(selector);
 const create = (tag, className, text) => {

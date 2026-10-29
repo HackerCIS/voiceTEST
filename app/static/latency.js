@@ -15,7 +15,7 @@ export const STATUS_LABELS = {
   unavailable: "시작 기준 없음",
 };
 
-const MODES = new Set(["elevenlabs", "openai_realtime", "hybrid", "v4_turbo"]);
+const MODES = new Set(["elevenlabs", "openai_realtime", "hybrid", "v4_turbo", "v4"]);
 
 export function formatDuration(ms) {
   if (!Number.isFinite(ms)) return "—";

@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta name="color-scheme" content="dark" />
     <title>Voice Lab · 응답 레이턴시 비교</title>
-    <link rel="stylesheet" href="/static/styles.css?v=20261022-v4" />
+    <link rel="stylesheet" href="/static/styles.css?v=20261030-v4pair" />
   </head>
   <body>
     <main class="shell">
@@ -21,13 +21,14 @@
       <section class="mode-section" aria-labelledby="mode-title">
         <div class="section-heading compact"><h2 id="mode-title">01 <span>테스트할 엔진</span></h2><p>대화를 종료한 뒤 엔진을 바꿀 수 있어요</p></div>
         <div class="mode-tabs" role="group" aria-label="음성 엔진 선택">
-          <button class="mode-button active" data-mode="elevenlabs" aria-pressed="true" type="button"><span class="mode-number">01</span><span class="mode-name"><strong>ElevenLabs</strong><small>듣고 답하는 일을 모두 합니다</small></span><span class="config-state">확인 중</span></button>
+          <button class="mode-button active" data-mode="elevenlabs" aria-pressed="true" type="button"><span class="mode-number">01</span><span class="mode-name"><strong>ElevenLabs</strong><small>에이전트가 듣고, 답하고, 말합니다</small></span><span class="config-state">확인 중</span></button>
           <button class="mode-button" data-mode="openai_realtime" aria-pressed="false" type="button"><span class="mode-number">02</span><span class="mode-name"><strong>OpenAI Realtime</strong><small>음성을 바로 듣고 말로 답합니다</small></span><span class="config-state">확인 중</span></button>
-          <button class="mode-button" data-mode="hybrid" aria-pressed="false" type="button"><span class="mode-number">03</span><span class="mode-name"><strong>ElevenLabs + OpenAI</strong><small>목소리는 ElevenLabs, 생각은 OpenAI</small></span><span class="config-state">확인 중</span></button>
+          <button class="mode-button" data-mode="hybrid" aria-pressed="false" type="button"><span class="mode-number">03</span><span class="mode-name"><strong>ElevenLabs + OpenAI</strong><small>같은 에이전트, 답만 OpenAI</small></span><span class="config-state">확인 중</span></button>
           <button class="mode-button" data-mode="clawops" aria-pressed="false" type="button"><span class="mode-number">04</span><span class="mode-name"><strong>ClawOps Phone</strong><small>070으로 받거나 거는 전화</small></span><span class="config-state">확인 중</span></button>
           <button class="mode-button" data-mode="livekit_phone" aria-pressed="false" type="button"><span class="mode-number">05</span><span class="mode-name"><strong>LiveKit Phone</strong><small>전화는 LiveKit, 상담은 gpt-realtime</small></span><span class="config-state">확인 중</span></button>
           <button class="mode-button" data-mode="gpt_live_phone" aria-pressed="false" type="button"><span class="mode-number">06</span><span class="mode-name"><strong>GPT-Live Phone</strong><small>같은 전화, 말과 생각을 나눕니다</small></span><span class="config-state">확인 중</span></button>
-          <button class="mode-button" data-mode="v4_turbo" aria-pressed="false" type="button"><span class="mode-number">07</span><span class="mode-name"><strong>v4 Turbo</strong><small>03과 같은 생각, 목소리는 v4 Turbo</small></span><span class="config-state">확인 중</span></button>
+          <button class="mode-button" data-mode="v4_turbo" aria-pressed="false" type="button"><span class="mode-number">07</span><span class="mode-name"><strong>v4 Turbo</strong><small>듣고, 태그 답을 쓰고, Turbo로 말합니다</small></span><span class="config-state">확인 중</span></button>
+          <button class="mode-button" data-mode="v4" aria-pressed="false" type="button"><span class="mode-number">08</span><span class="mode-name"><strong>v4</strong><small>07과 같고, 목소리는 v4</small></span><span class="config-state">확인 중</span></button>
         </div>
       </section>
 
@@ -94,7 +95,7 @@
             <p class="comparison-help">중앙값은 가운데 응답 시간, P95는 측정값의 95%가 이 시간 이내라는 뜻입니다. 각 엔진을 10회 이상 측정해 보세요.</p>
           </section>
           <section class="history-panel panel" aria-labelledby="history-title">
-            <div class="section-heading"><h2 id="history-title">턴별 측정 기록</h2><label class="sr-only" for="history-mode">측정 기록 엔진 필터</label><select id="history-mode"><option value="all">모든 엔진</option><option value="elevenlabs">ElevenLabs</option><option value="openai_realtime">OpenAI Realtime</option><option value="hybrid">ElevenLabs + OpenAI</option><option value="clawops">ClawOps Phone</option><option value="livekit_phone">LiveKit Phone</option><option value="gpt_live_phone">GPT-Live Phone</option><option value="v4_turbo">v4 Turbo</option></select></div>
+            <div class="section-heading"><h2 id="history-title">턴별 측정 기록</h2><label class="sr-only" for="history-mode">측정 기록 엔진 필터</label><select id="history-mode"><option value="all">모든 엔진</option><option value="elevenlabs">ElevenLabs</option><option value="openai_realtime">OpenAI Realtime</option><option value="hybrid">ElevenLabs + OpenAI</option><option value="clawops">ClawOps Phone</option><option value="livekit_phone">LiveKit Phone</option><option value="gpt_live_phone">GPT-Live Phone</option><option value="v4_turbo">v4 Turbo</option><option value="v4">v4</option></select></div>
             <div class="history-scroll"><table id="history-table" hidden><caption class="sr-only">선택한 입력 기준의 최근 20개 측정 기록. 중단·실패한 턴은 평균에서 제외합니다.</caption><thead><tr><th scope="col">측정 시각</th><th scope="col">엔진 / 모델</th><th scope="col">응답 지연</th></tr></thead><tbody id="history-body"></tbody></table><div id="history-empty" class="history-empty"><span class="empty-chart" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i></span><strong>첫 번째 측정을 기다리고 있어요</strong><p>선택한 입력 기준의 측정 결과가 여기에 쌓입니다.</p></div></div>
             <div class="history-actions"><span id="history-count">0개 중 최근 0개</span><div><button id="export-measurements" class="text-button" type="button" disabled>JSON 내보내기 ↗</button><button id="reset-measurements" class="text-button" type="button" disabled>초기화</button></div></div>
             <p id="storage-note" class="storage-note"></p><div id="reset-notice" class="reset-notice" role="status" hidden>측정 기록을 비웠습니다.<button id="undo-reset" type="button" class="text-button">되돌리기</button></div>
@@ -110,6 +111,6 @@
       </div></details>
       <footer><span>VOICE LAB <span class="footer-divider">/</span> 직접 측정하는 음성 경험</span><span>음성과 대화는 선택한 엔진의 서비스로 전송됩니다.</span></footer>
     </main>
-    <script type="module" src="/static/app.js?v=20261022-v4"></script>
+    <script type="module" src="/static/app.js?v=20261030-vad"></script>
   </body>
 </html>

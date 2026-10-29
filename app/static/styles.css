@@ -42,6 +42,7 @@ h3 { margin: 0; font-size: 12px; }
 [data-mode="livekit_phone"] { --engine-color: #f0a3c2; }
 [data-mode="gpt_live_phone"] { --engine-color: #8fd0ff; }
 [data-mode="v4_turbo"] { --engine-color: #d7a4ff; }
+[data-mode="v4"] { --engine-color: #8fd0a8; }
 .mode-button.active { border-color: var(--engine-color); background: color-mix(in srgb, var(--engine-color) 8%, #14171d); }
 .mode-button:disabled { opacity: .58; }
 .mode-button.active:disabled { opacity: 1; }
@@ -179,6 +180,8 @@ tr[data-mode="openai_realtime"] .history-value { --engine-color: var(--mint); }
 tr[data-mode="hybrid"] .history-value { --engine-color: var(--blue); }
 tr[data-mode="v4_turbo"] .history-value,
 .comparison-card[data-mode="v4_turbo"] { --engine-color: #d7a4ff; }
+tr[data-mode="v4"] .history-value,
+.comparison-card[data-mode="v4"] { --engine-color: #8fd0a8; }
 .history-value strong { color: var(--engine-color); font: 500 12px var(--mono); }
 .history-bar { display: block; height: 2px; margin-top: 7px; background: var(--engine-color); opacity: .65; }
 .excluded-label { font-size: 10px; color: #d3b590; }

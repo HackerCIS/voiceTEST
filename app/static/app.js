@@ -1,7 +1,8 @@
-import { formatDuration } from "./latency.js?v=20261022-v4";
-import { createLatencyDashboard } from "./latency-ui.js?v=20261022-v4";
+import { formatDuration } from "./latency.js?v=20261030-v4pair";
+import { createLatencyDashboard } from "./latency-ui.js?v=20261030-v4pair";
 import { createPhoneSession, normalizePhoneNumber, phoneStatusLabel } from "./phone-client.js?v=20260917-2";
 import { connectLivekitTranscript } from "./livekit-transcript.js?v=20261008-transcript";
+import { decodeBase64, playPcmBytes } from "./v4-client.js?v=20261030-v4pipe";
 
 const MODE_INFO = {
   elevenlabs: {
@@ -9,7 +10,7 @@ const MODE_INFO = {
     label: "ElevenLabs",
     provider: "ElevenLabs Agent",
     fallbackModel: "Agent 설정 모델",
-    description: "듣고, 생각하고, 말하는 일을 ElevenLabs가 모두 합니다. 지금 쓰는 음성의 기준입니다.",
+    description: "ElevenLabs 에이전트가 듣고, 답하고, 말합니다. 답은 그 에이전트에 설정된 LLM이 씁니다.",
   },
   openai_realtime: {
     number: "02",
@@ -23,7 +24,7 @@ const MODE_INFO = {
     label: "ElevenLabs + OpenAI",
     provider: "ElevenLabs Agent + OpenAI LLM",
     fallbackModel: "gpt-5.4",
-    description: "목소리는 ElevenLabs, 답 문장은 OpenAI입니다. 07과 비교할 기존 음성입니다.",
+    description: "01과 같이 ElevenLabs 에이전트가 듣고 말합니다. 답 문장만 OpenAI gpt-5.4가 씁니다. 오디오 태그는 없습니다.",
   },
   clawops: {
     number: "04",
@@ -54,7 +55,14 @@ const MODE_INFO = {
     label: "v4 Turbo",
     provider: "ElevenLabs v4 Turbo + OpenAI",
     fallbackModel: "v4 Turbo · gpt-5.4",
-    description: "03과 같은 OpenAI 답변입니다. 목소리만 ElevenLabs v4 Turbo로 바꿉니다. 쉼, 말투, 긴 대화의 음색을 비교합니다.",
+    description: "ElevenLabs가 듣고, OpenAI가 오디오 태그가 들어간 답을 쓰고, Eleven v4 Turbo가 그 답을 읽습니다. 프롬프트는 app/prompts/v4_turbo.txt 입니다.",
+  },
+  v4: {
+    number: "08",
+    label: "v4",
+    provider: "ElevenLabs v4 + OpenAI",
+    fallbackModel: "v4 · gpt-5.4",
+    description: "07과 같은 듣고 답하는 구조입니다. 목소리만 Eleven v4입니다. 프롬프트와 목소리 ID는 07과 같습니다.",
   },
 };
 
@@ -324,6 +332,22 @@ function upsertTranscript({ id, role, text }) {
   elements.transcript.scrollTop = elements.transcript.scrollHeight;
 }
 
+function showCurrentV4Line(message) {
+  const text = typeof message === "string" ? message.trim() : "";
+  if (!text) return;
+  transcriptNodes.clear();
+  elements.transcript.replaceChildren();
+  const item = document.createElement("article");
+  item.className = "message agent";
+  const label = document.createElement("span");
+  label.className = "message-role";
+  label.textContent = "이번 턴";
+  const content = document.createElement("p");
+  content.textContent = text;
+  item.append(label, content);
+  elements.transcript.append(item);
+}
+
 function appendMessage(role, message) {
   const text = typeof message === "string" ? message.trim() : "";
   if (!text) return;
@@ -421,24 +445,32 @@ async function getElevenLabsSessionConfig(mode) {
   });
 }
 
-function buildElevenLabsOptions(session, runId) {
-  let vadSpeaking = false;
-  let lastSpeechEnd = null;
-  let speechSinceLastTurn = false;
-  let awaitingUserTranscript = false;
+function buildElevenLabsOptions(session, runId, meterStream) {
   let hasAgentSpoken = false;
   let textEcho = null;
+  let userVoiced = false;
+  let lastLoudAt = null;
   const seenUserEvents = new Set();
-  const startVoiceTurn = (key) => {
-    const hasSpeechEnd = speechSinceLastTurn && lastSpeechEnd !== null
-      && performance.now() - lastSpeechEnd < 15000;
-    const turn = noteUserTurn(
-      hasSpeechEnd ? "voice" : "transcript",
-      hasSpeechEnd ? "elevenlabs.vad_score.speech_end" : "elevenlabs.user_transcript",
-      { key, at: hasSpeechEnd ? lastSpeechEnd : undefined },
-    );
-    speechSinceLastTurn = false;
-    return turn;
+  const audioContext = new AudioContext();
+  if (audioContext.state === "suspended") audioContext.resume();
+  const analyser = audioContext.createAnalyser();
+  analyser.fftSize = 2048;
+  const samples = new Float32Array(analyser.fftSize);
+  audioContext.createMediaStreamSource(meterStream).connect(analyser);
+  const meter = setInterval(() => {
+    if (runId !== currentRunId || isMuted || isAssistantSpeaking) return;
+    analyser.getFloatTimeDomainData(samples);
+    let energy = 0;
+    for (const value of samples) energy += value * value;
+    if (Math.sqrt(energy / samples.length) >= 0.02) {
+      userVoiced = true;
+      lastLoudAt = performance.now();
+    }
+  }, 50);
+  const stopMeter = () => {
+    clearInterval(meter);
+    meterStream.getTracks().forEach((track) => track.stop());
+    if (audioContext.state !== "closed") audioContext.close();
   };
   const callbacks = {
     connectionType: "webrtc",
@@ -460,15 +492,7 @@ function buildElevenLabsOptions(session, runId) {
     },
     onVadScore: ({ vadScore }) => {
       if (runId !== currentRunId || isMuted) return;
-      if (vadScore >= 0.6 && !vadSpeaking) {
-        vadSpeaking = true;
-        lastSpeechEnd = null;
-        speechSinceLastTurn = true;
-        dashboard.tracker.cancel("interrupted");
-      } else if (vadScore <= 0.35 && vadSpeaking) {
-        vadSpeaking = false;
-        lastSpeechEnd = performance.now();
-      }
+      if (vadScore >= 0.6) dashboard.tracker.cancel("interrupted");
     },
     onMessage: ({ message, role, source, event_id }) => {
       if (runId !== currentRunId) return;
@@ -480,18 +504,6 @@ function buildElevenLabsOptions(session, runId) {
         if (textEcho?.text === message && performance.now() - textEcho.at < 30000) {
           textEcho = null;
           return;
-        }
-        if (awaitingUserTranscript) {
-          awaitingUserTranscript = false;
-        } else if (!isAssistantSpeaking || dashboard.tracker.pending) {
-          startVoiceTurn(event_id == null ? undefined : `elevenlabs:${event_id}`);
-        } else if (!speechSinceLastTurn) {
-          // Audio is already playing and no speech boundary was observed.
-          // A late transcript cannot produce a trustworthy first-audio value.
-          noteUserTurn("transcript", "elevenlabs.user_transcript", {
-            key: event_id == null ? undefined : `elevenlabs:${event_id}`,
-          });
-          dashboard.tracker.cancel("unavailable");
         }
       } else if (!hasAgentSpoken && !dashboard.tracker.pending) {
         // Lock text submission during an unsolicited greeting's generation,
@@ -508,13 +520,16 @@ function buildElevenLabsOptions(session, runId) {
       isAssistantSpeaking = mode === "speaking";
       if (isAssistantSpeaking) {
         hasAgentSpoken = true;
-        // Audio may precede final transcription. An observed VAD boundary can
-        // still anchor that turn; the later transcript must not arm it twice.
-        if (!dashboard.tracker.pending && speechSinceLastTurn && lastSpeechEnd !== null) {
-          startVoiceTurn();
-          awaitingUserTranscript = true;
+        // The SDK vad score falls in the same moment speaking begins, so it
+        // measured a few milliseconds. Anchor to the last local mic energy.
+        const voicedAt = lastLoudAt;
+        const heardUser = userVoiced && voicedAt !== null;
+        userVoiced = false;
+        lastLoudAt = null;
+        if (heardUser && performance.now() - voicedAt >= 80) {
+          noteUserTurn("voice", "elevenlabs.local_vad.speech_end", { at: voicedAt });
+          noteAssistantStarted("elevenlabs.onModeChange.speaking");
         }
-        noteAssistantStarted("elevenlabs.onModeChange.speaking");
       }
       updateControls();
     },
@@ -525,13 +540,16 @@ function buildElevenLabsOptions(session, runId) {
     },
   };
 
-  if (session.conversationToken) {
-    return { ...callbacks, conversationToken: session.conversationToken };
+  const options = session.conversationToken
+    ? { ...callbacks, conversationToken: session.conversationToken }
+    : session.agentId
+      ? { ...callbacks, agentId: session.agentId }
+      : null;
+  if (!options) {
+    stopMeter();
+    throw new Error("서버가 올바른 ElevenLabs 연결 정보를 반환하지 않았습니다.");
   }
-  if (session.agentId) {
-    return { ...callbacks, agentId: session.agentId };
-  }
-  throw new Error("서버가 올바른 ElevenLabs 연결 정보를 반환하지 않았습니다.");
+  return { options, stopMeter };
 }
 
 async function startElevenLabsSession(mode, runId) {
@@ -542,16 +560,20 @@ async function startElevenLabsSession(mode, runId) {
   if (!navigator.mediaDevices?.getUserMedia) {
     throw new Error("이 브라우저에서는 마이크를 사용할 수 없습니다.");
   }
-  const permissionStream = await navigator.mediaDevices.getUserMedia({ audio: true });
-  permissionStream.getTracks().forEach((track) => track.stop());
-  if (runId !== currentRunId) throw new Error("연결이 취소되었습니다.");
+  const meterStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+  if (runId !== currentRunId) {
+    meterStream.getTracks().forEach((track) => track.stop());
+    throw new Error("연결이 취소되었습니다.");
+  }
 
-  const conversation = await Conversation.startSession(
-    buildElevenLabsOptions(sessionConfig, runId),
-  );
+  const { options, stopMeter } = buildElevenLabsOptions(sessionConfig, runId, meterStream);
+  const conversation = await Conversation.startSession(options);
   return {
     id: conversation.getId?.() || sessionConfig.conversationId,
-    end: () => conversation.endSession(),
+    end: async () => {
+      stopMeter();
+      await conversation.endSession();
+    },
     setMuted: (muted) => conversation.setMicMuted(muted),
     sendText: (message) => conversation.sendUserMessage(message),
   };
@@ -1013,6 +1035,208 @@ async function startLivekitSession(runId) {
   };
 }
 
+async function startV4Session(runId, tts = "turbo") {
+  if (!navigator.mediaDevices?.getUserMedia || typeof MediaRecorder === "undefined") {
+    throw new Error("이 브라우저에서는 마이크 녹음을 사용할 수 없습니다.");
+  }
+  const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+  if (runId !== currentRunId) {
+    stream.getTracks().forEach((track) => track.stop());
+    throw new Error("연결이 취소되었습니다.");
+  }
+  const audioContext = new AudioContext();
+  if (audioContext.state === "suspended") await audioContext.resume();
+  const source = audioContext.createMediaStreamSource(stream);
+  const analyser = audioContext.createAnalyser();
+  analyser.fftSize = 2048;
+  source.connect(analyser);
+  const samples = new Float32Array(analyser.fftSize);
+  const mimeType = ["audio/webm;codecs=opus", "audio/webm"].find((type) => MediaRecorder.isTypeSupported(type)) || "";
+
+  let stopped = false;
+  let speaking = false;
+  let busy = false;
+  let loudFrames = 0;
+  let quietFrames = 0;
+  let speechStartedAt = 0;
+  let recorder = null;
+  let chunks = [];
+  let playback = null;
+  let requestAbort = null;
+  let dialogSessionId = "";
+  const setMicEnabled = (enabled) => {
+    stream.getAudioTracks().forEach((track) => {
+      track.enabled = enabled && !isMuted;
+    });
+  };
+
+  async function requestTurn({ blob, text, greet } = {}) {
+    const body = new FormData();
+    body.append("tts", tts);
+    if (dialogSessionId) body.append("sessionId", dialogSessionId);
+    if (greet) body.append("greet", "true");
+    if (text) body.append("text", text);
+    if (blob) body.append("audio", blob, "speech.webm");
+    requestAbort = new AbortController();
+    const response = await fetch("/api/v4/turn", { method: "POST", body, signal: requestAbort.signal });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      const detail = typeof data.detail === "string" ? data.detail : "";
+      throw new Error(detail || `대화 요청에 실패했습니다 (HTTP ${response.status}).`);
+    }
+    if (data.sessionId) dialogSessionId = data.sessionId;
+    return data;
+  }
+
+  async function speakReply(data, { measure } = {}) {
+    if (!data.audioBase64) throw new Error("음성이 없습니다.");
+    isAssistantSpeaking = true;
+    updateControls();
+    setMicEnabled(false);
+    playback?.close();
+    playback = playPcmBytes(decodeBase64(data.audioBase64), {
+      audioContext,
+      onStarted: () => {
+        if (measure && runId === currentRunId) noteAssistantStarted("v4.playback");
+      },
+    });
+    if (!playback.started()) throw new Error("음성이 없습니다.");
+    if (data.agentText && runId === currentRunId) showCurrentV4Line(data.agentText);
+    if (!stopped) await playback.whenFinished();
+  }
+
+  async function finishUtterance(endedAt) {
+    const recorded = recorder;
+    recorder = null;
+    speaking = false;
+    loudFrames = 0;
+    quietFrames = 0;
+    if (!recorded || recorded.state === "inactive") return;
+    busy = true;
+    const blob = await new Promise((resolve) => {
+      recorded.addEventListener("stop", () => {
+        resolve(new Blob(chunks, { type: recorded.mimeType || "audio/webm" }));
+      }, { once: true });
+      recorded.stop();
+    });
+    chunks = [];
+    if (stopped || runId !== currentRunId || blob.size < 800 || endedAt - speechStartedAt < 350) {
+      busy = false;
+      return;
+    }
+    noteUserTurn("voice", "v4.speech_end", { at: endedAt });
+    try {
+      const data = await requestTurn({ blob });
+      if (runId !== currentRunId || stopped) {
+        dashboard.tracker.cancel("cancelled");
+        return;
+      }
+      await speakReply(data, { measure: true });
+    } catch (error) {
+      if (error?.name === "AbortError" || stopped || runId !== currentRunId) {
+        dashboard.tracker.cancel("cancelled");
+        return;
+      }
+      dashboard.tracker.cancel("failed");
+      throw error instanceof Error ? error : new Error("답변을 만들지 못했습니다.");
+    } finally {
+      requestAbort = null;
+      busy = false;
+      isAssistantSpeaking = false;
+      if (!stopped) setMicEnabled(true);
+      updateControls();
+    }
+  }
+
+  const interval = setInterval(() => {
+    if (stopped || runId !== currentRunId || busy) return;
+    analyser.getFloatTimeDomainData(samples);
+    let energy = 0;
+    for (const value of samples) energy += value * value;
+    const loud = !isMuted && Math.sqrt(energy / samples.length) >= 0.02;
+    if (!speaking) {
+      loudFrames = loud ? loudFrames + 1 : 0;
+      if (loudFrames < 3) return;
+      speaking = true;
+      quietFrames = 0;
+      speechStartedAt = performance.now();
+      dashboard.tracker.cancel("interrupted");
+      playback?.close();
+      playback = null;
+      chunks = [];
+      recorder = new MediaRecorder(stream, mimeType ? { mimeType } : undefined);
+      recorder.addEventListener("dataavailable", (event) => {
+        if (event.data?.size) chunks.push(event.data);
+      });
+      recorder.start();
+      return;
+    }
+    const elapsed = performance.now() - speechStartedAt;
+    if (loud && elapsed < 20000) {
+      quietFrames = 0;
+      return;
+    }
+    quietFrames += loud ? 0 : 1;
+    if (quietFrames < 14 && elapsed < 20000) return;
+    const endedAt = performance.now() - quietFrames * 50;
+    finishUtterance(Math.max(speechStartedAt, endedAt)).catch((error) => {
+      if (runId !== currentRunId) return;
+      console.error(error);
+      showError(error.message || "답변을 만들지 못했습니다.");
+    });
+  }, 50);
+
+  return {
+    id: modeModel(tts === "v4" ? "v4" : "v4_turbo"),
+    end: async () => {
+      stopped = true;
+      clearInterval(interval);
+      requestAbort?.abort();
+      const activeRecorder = recorder;
+      recorder = null;
+      if (activeRecorder && activeRecorder.state !== "inactive") activeRecorder.stop();
+      playback?.close();
+      stream.getTracks().forEach((track) => track.stop());
+      if (audioContext.state !== "closed") await audioContext.close();
+    },
+    setMuted: () => {},
+    greet: async () => {
+      busy = true;
+      try {
+        const data = await requestTurn({ greet: true });
+        if (runId !== currentRunId || stopped) return;
+        await speakReply(data, { measure: false });
+      } finally {
+        requestAbort = null;
+        busy = false;
+        isAssistantSpeaking = false;
+        if (!stopped) setMicEnabled(true);
+        updateControls();
+      }
+    },
+    sendText: async (message) => {
+      busy = true;
+      try {
+        const data = await requestTurn({ text: message });
+        if (runId !== currentRunId || stopped) {
+          dashboard.tracker.cancel("cancelled");
+          return;
+        }
+        await speakReply(data, { measure: true });
+      } catch (error) {
+        if (error?.name !== "AbortError") dashboard.tracker.cancel("failed");
+        throw error;
+      } finally {
+        requestAbort = null;
+        busy = false;
+        isAssistantSpeaking = false;
+        if (!stopped) setMicEnabled(true);
+        updateControls();
+      }
+    },
+  };
+}
+
 async function startSelectedMode() {
   if (activeSession || isConnecting || !isModeConfigured()) return;
 
@@ -1053,7 +1277,11 @@ async function startSelectedMode() {
           ? await startClawopsSession(runId)
           : selectedMode === "openai_realtime"
             ? await startOpenAIRealtimeSession(runId)
-            : await startElevenLabsSession(selectedMode, runId);
+            : selectedMode === "v4_turbo"
+              ? await startV4Session(runId, "turbo")
+              : selectedMode === "v4"
+                ? await startV4Session(runId, "v4")
+                : await startElevenLabsSession(selectedMode, runId);
 
     if (currentRunId !== runId) {
       await session.end();
@@ -1062,6 +1290,15 @@ async function startSelectedMode() {
     activeSession = session;
     if (!uiConnected) markConnected(session.id);
     updateControls();
+    if (session.greet) {
+      try {
+        await session.greet();
+      } catch (error) {
+        if (currentRunId === runId) {
+          showError(error instanceof Error ? error.message : "첫 인사를 만들지 못했습니다.");
+        }
+      }
+    }
   } catch (error) {
     if (currentRunId !== runId) return;
     console.error(error);
@@ -1161,14 +1398,14 @@ elements.mute.addEventListener("click", () => {
   elements.mute.textContent = isMuted ? "마이크 켜기" : "마이크 끄기";
 });
 
-elements.messageForm.addEventListener("submit", (event) => {
+elements.messageForm.addEventListener("submit", async (event) => {
   event.preventDefault();
   const message = elements.messageInput.value.trim();
   if (!activeSession || !message || elements.send.disabled) return;
   try {
     noteUserTurn("text", "client.text_send");
-    activeSession.sendText(message);
-    appendMessage("user", message);
+    if (selectedMode !== "v4_turbo" && selectedMode !== "v4") appendMessage("user", message);
+    await activeSession.sendText(message);
     elements.messageInput.focus();
   } catch (error) {
     dashboard.tracker.cancel("failed");

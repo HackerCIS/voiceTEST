@@ -93,7 +93,7 @@ Agent가 보내는 대화 내역은 그대로 전달합니다. Prompt ID는 Open
 
 ElevenLabs 서버가 Custom LLM을 호출하므로 localhost 주소는 사용할 수 없습니다. 로컬 실험에서는 FastAPI 실행 후 ngrok 같은 터널을 사용할 수 있습니다.
 
-모드 07은 이 hybrid 에이전트를 한 번 더 복제하고, 음성 모델만 Eleven v4 Turbo로 바꾼 것입니다. ID는 `ELEVENLABS_V4_TURBO_AGENT_ID`에 넣습니다. Custom LLM 주소, 모델 ID, Secret은 03과 같게 둡니다. 그러면 답 문장은 같고 목소리만 달라집니다.
+모드 07과 08은 에이전트를 쓰지 않습니다. 둘 다 ElevenLabs `scribe_v2`가 한국어로 받아 적고, OpenAI가 같은 프롬프트로 답을 씁니다. 07은 Eleven v4 Turbo(`eleven_v4_turbo`) 웹소켓이 읽고, 08은 Eleven v4(`eleven_v4`) HTTP 대화 API가 읽습니다. 필요한 값은 `ELEVENLABS_API_KEY`, `ELEVENLABS_V4_VOICE_ID`, `OPENAI_API_KEY`입니다. 문장 프롬프트는 `app/prompts/v4_turbo.txt`입니다.
 
 ```bash
 ngrok http 8000
