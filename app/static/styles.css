@@ -41,13 +41,14 @@ h3 { margin: 0; font-size: 12px; }
 [data-mode="clawops"] { --engine-color: #e9c174; }
 [data-mode="livekit_phone"] { --engine-color: #f0a3c2; }
 [data-mode="gpt_live_phone"] { --engine-color: #8fd0ff; }
+[data-mode="v4_turbo"] { --engine-color: #d7a4ff; }
 .mode-button.active { border-color: var(--engine-color); background: color-mix(in srgb, var(--engine-color) 8%, #14171d); }
 .mode-button:disabled { opacity: .58; }
 .mode-button.active:disabled { opacity: 1; }
 .mode-number { display: grid; place-items: center; flex-shrink: 0; width: 33px; height: 36px; border: 1px solid var(--line); border-radius: 7px; font: 12px var(--mono); color: var(--engine-color); background: #191d25; }
 .mode-name { min-width: 0; }
 .mode-name strong { display: block; font-size: 13px; font-weight: 600; }
-.mode-name small { display: block; margin-top: 7px; font-size: 11px; color: var(--muted); }
+.mode-name small { display: block; margin-top: 7px; font-size: 12px; line-height: 1.45; color: var(--muted); }
 .config-state { margin-left: auto; align-self: flex-start; flex-shrink: 0; font-size: 9px; color: var(--subtle); white-space: nowrap; }
 .config-state.ready { color: var(--mint); }
 .workspace-grid { display: grid; grid-template-columns: minmax(300px, 350px) minmax(0, 1fr); gap: 20px; align-items: start; }
@@ -176,6 +177,8 @@ td { padding: 12px 7px; border-bottom: 1px solid #232932; }
 .history-value { --engine-color: var(--purple); }
 tr[data-mode="openai_realtime"] .history-value { --engine-color: var(--mint); }
 tr[data-mode="hybrid"] .history-value { --engine-color: var(--blue); }
+tr[data-mode="v4_turbo"] .history-value,
+.comparison-card[data-mode="v4_turbo"] { --engine-color: #d7a4ff; }
 .history-value strong { color: var(--engine-color); font: 500 12px var(--mono); }
 .history-bar { display: block; height: 2px; margin-top: 7px; background: var(--engine-color); opacity: .65; }
 .excluded-label { font-size: 10px; color: #d3b590; }

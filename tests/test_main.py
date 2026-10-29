@@ -63,6 +63,20 @@ def test_hybrid_session_uses_separate_agent_id(monkeypatch) -> None:
     assert response.json()["mode"] == "hybrid"
 
 
+def test_v4_turbo_session_uses_its_own_agent_id(monkeypatch) -> None:
+    monkeypatch.setenv("ELEVENLABS_AGENT_ID", "agent_current")
+    monkeypatch.setenv("ELEVENLABS_OPENAI_AGENT_ID", "agent_hybrid")
+    monkeypatch.setenv("ELEVENLABS_V4_TURBO_AGENT_ID", "agent_v4")
+    monkeypatch.delenv("ELEVENLABS_API_KEY", raising=False)
+
+    with TestClient(app) as client:
+        response = client.post("/api/session?mode=v4_turbo")
+
+    assert response.status_code == 200
+    assert response.json()["agentId"] == "agent_v4"
+    assert response.json()["mode"] == "v4_turbo"
+
+
 def test_fetch_conversation_token() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         assert str(request.url).startswith(ELEVENLABS_TOKEN_URL)

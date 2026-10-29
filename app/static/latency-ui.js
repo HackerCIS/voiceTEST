@@ -1,7 +1,7 @@
 import {
   STORAGE_KEY, MAX_RECORDS, INPUT_LABELS, STATUS_LABELS,
   TurnLatency, formatDuration, parseRecords, summarize,
-} from "./latency.js?v=20260917-1";
+} from "./latency.js?v=20261022-v4";
 
 const $ = (selector) => document.querySelector(selector);
 const create = (tag, className, text) => {
@@ -96,7 +96,7 @@ export function createLatencyDashboard({ modeInfo, getModel, onChange }) {
       card.dataset.mode = summary.mode;
       card.classList.toggle("selected", summary.mode === selectedMode);
       const header = create("div", "comparison-card-heading");
-      header.append(create("span", "model-index", `0${index + 1}`), create("h3", "", summary.info.label));
+      header.append(create("span", "model-index", summary.info.number || String(index + 1).padStart(2, "0")), create("h3", "", summary.info.label));
       card.append(header, create("p", "comparison-model", getModel(summary.mode)));
       const average = create("div", "comparison-average");
       average.append(create("strong", "", formatDuration(summary.mean)), create("span", "", "평균"));

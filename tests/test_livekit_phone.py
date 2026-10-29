@@ -204,6 +204,47 @@ def test_inbound_modes_point_the_shared_rule_at_different_workers(monkeypatch):
     ]
 
 
+class _CallRoom:
+    def __init__(self, name, participants, created_ms):
+        self.name = name
+        self.num_participants = participants
+        self.creation_time_ms = created_ms
+        self.creation_time = created_ms // 1000
+
+
+class _RoomApi:
+    rooms = []
+
+    def __init__(self, *args, **kwargs):
+        self.room = self
+
+    async def list_rooms(self, request):
+        return type("ListedRooms", (), {"rooms": list(_RoomApi.rooms)})()
+
+    async def aclose(self):
+        return None
+
+
+def test_active_call_room_skips_lab_and_keeps_the_newest(monkeypatch):
+    _set_livekit_env(monkeypatch)
+    import livekit.api as lkapi
+
+    now_ms = int(__import__("time").time() * 1000)
+    _RoomApi.rooms = [
+        _CallRoom("call-lab-old", 2, now_ms),
+        _CallRoom("call-monitor", 1, now_ms),
+        _CallRoom("call-older", 2, now_ms - 20_000),
+        _CallRoom("call-newest", 1, now_ms - 5_000),
+        _CallRoom("call-empty", 0, now_ms),
+        _CallRoom("other-room", 3, now_ms),
+    ]
+    monkeypatch.setattr(lkapi, "LiveKitAPI", _RoomApi)
+    from app import livekit_phone
+
+    found = asyncio.run(livekit_phone.find_active_call_room())
+    assert found["roomName"] == "call-newest"
+
+
 def test_gpt_live_outbound_does_not_fall_back_to_realtime_agent(monkeypatch):
     _set_livekit_env(monkeypatch)
     monkeypatch.setenv("LIVEKIT_GPT_LIVE_AGENT_NAME", "")

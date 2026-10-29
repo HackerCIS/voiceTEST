@@ -62,6 +62,7 @@ DEFAULT_HYBRID_INSTRUCTIONS = """당신은 ElevenLabs 음성 에이전트의 대
 class RuntimeConfig:
     elevenlabs_agent_id: str
     elevenlabs_openai_agent_id: str
+    elevenlabs_v4_turbo_agent_id: str
     elevenlabs_api_key: str
     openai_api_key: str
     openai_project_id: str
@@ -103,6 +104,9 @@ def get_runtime_config() -> RuntimeConfig:
         elevenlabs_agent_id=os.getenv("ELEVENLABS_AGENT_ID", "").strip(),
         elevenlabs_openai_agent_id=os.getenv(
             "ELEVENLABS_OPENAI_AGENT_ID", ""
+        ).strip(),
+        elevenlabs_v4_turbo_agent_id=os.getenv(
+            "ELEVENLABS_V4_TURBO_AGENT_ID", ""
         ).strip(),
         elevenlabs_api_key=os.getenv("ELEVENLABS_API_KEY", "").strip(),
         openai_api_key=os.getenv("OPENAI_API_KEY", "").strip(),
@@ -403,6 +407,30 @@ async def health() -> dict[str, Any]:
                     if not value
                 ],
             },
+            "v4_turbo": {
+                "configured": bool(
+                    config.elevenlabs_v4_turbo_agent_id
+                    and config.openai_api_key
+                    and config.custom_llm_shared_secret
+                ),
+                "model": f"v4 Turbo · {config.openai_llm_model}",
+                "proxyUrl": proxy_url,
+                "missing": [
+                    name
+                    for name, value in (
+                        (
+                            "ELEVENLABS_V4_TURBO_AGENT_ID",
+                            config.elevenlabs_v4_turbo_agent_id,
+                        ),
+                        ("OPENAI_API_KEY", config.openai_api_key),
+                        (
+                            "CUSTOM_LLM_SHARED_SECRET",
+                            config.custom_llm_shared_secret,
+                        ),
+                    )
+                    if not value
+                ],
+            },
             "clawops": {
                 "configured": config.clawops_configured,
                 "model": f"{config.openai_realtime_model} · 070",
@@ -576,6 +604,20 @@ def _livekit_outbound_error(exc: Exception) -> HTTPException:
     )
 
 
+@app.get("/api/livekit-phone/active-room")
+async def livekit_phone_active_room() -> dict[str, Any]:
+    try:
+        return await livekit_phone.find_active_call_room()
+    except RuntimeError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        logger.exception("LiveKit room list failed")
+        raise HTTPException(
+            status_code=502,
+            detail=f"진행 중인 통화 방을 찾지 못했습니다: {exc}",
+        ) from exc
+
+
 @app.post("/api/livekit-phone/inbound")
 async def livekit_phone_inbound() -> dict[str, Any]:
     try:
@@ -650,12 +692,15 @@ async def gpt_live_phone_outbound(payload: LiveKitOutboundRequest) -> dict[str, 
 @app.post("/api/session")
 async def create_elevenlabs_session(
     request: Request,
-    mode: Literal["elevenlabs", "hybrid"] = Query("elevenlabs"),
+    mode: Literal["elevenlabs", "hybrid", "v4_turbo"] = Query("elevenlabs"),
 ) -> JSONResponse:
     config = get_runtime_config()
     if mode == "hybrid":
         agent_id = config.elevenlabs_openai_agent_id
         variable_name = "ELEVENLABS_OPENAI_AGENT_ID"
+    elif mode == "v4_turbo":
+        agent_id = config.elevenlabs_v4_turbo_agent_id
+        variable_name = "ELEVENLABS_V4_TURBO_AGENT_ID"
     else:
         agent_id = config.elevenlabs_agent_id
         variable_name = "ELEVENLABS_AGENT_ID"
